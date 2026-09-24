@@ -112,7 +112,7 @@ def _map_columns(header):
 
 
 def _sku_key(sku):
-    return sku.strip().lower()
+    return re.sub(r"\s+", "", sku).lower()
 
 
 # --- validation --------------------------------------------------------------

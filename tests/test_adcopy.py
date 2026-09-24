@@ -254,6 +254,18 @@ class DuplicateSkuTest(unittest.TestCase):
         ))
         self.assertTrue(all(a["status"] == "NEEDS_REVIEW" for a in ads))
 
+    def test_duplicate_check_ignores_spaces_inside_the_sku(self):
+        # The CureFit sheet has "CS 178"; a later "CS178" is the same code.
+        ads = generate_from_csv(csv_of(
+            "Code,Name,Brand,Price",
+            "CS 178,footwear,Curefit,₹1599",
+            "CS178,footwear,Curefit,₹1599",
+        ))
+        self.assertEqual([a["sku"] for a in ads], ["CS 178", "CS178"])
+        for ad in ads:
+            self.assertEqual(ad["status"], "NEEDS_REVIEW")
+            self.assertIn("duplicate", ad["review_notes"].lower())
+
 
 if __name__ == "__main__":
     unittest.main()

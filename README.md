@@ -28,7 +28,7 @@ A header row followed by one product per row. The column names can vary:
 
 - **READY**: copy filled in. Headline ≤ 40 chars, description ≤ 30, primary text ≤ 125 (Meta's truncation points).
 - **NEEDS_REVIEW**: copy left blank and `review_notes` says why. Causes: missing SKU or name,
-  duplicate SKU (every row sharing it is flagged), a price of 0 or a price that can't be read,
+  duplicate SKU (every row sharing it is flagged; case and spaces are ignored, so `CS 178` matches `CS178`), a price of 0 or a price that can't be read,
   a row with more cells than headers (usually an unquoted comma in a price), or source text
   that calls out the viewer's health or body.
 
