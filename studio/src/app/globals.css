@@ -1,0 +1,140 @@
+@import "tailwindcss";
+
+:root {
+  --marquee: #0e0b0a;
+  --marquee-raised: #17120f;
+  --cream: #f3e9d6;
+  --cream-dim: #cabfa9;
+  --red: #cc3327;
+  --red-hot: #e8493a;
+  --gold: #e2a53c;
+  --olive: #6c7a4a;
+  --line: rgba(243, 233, 214, 0.14);
+}
+
+@theme inline {
+  --color-marquee: var(--marquee);
+  --color-marquee-raised: var(--marquee-raised);
+  --color-cream: var(--cream);
+  --color-cream-dim: var(--cream-dim);
+  --color-red: var(--red);
+  --color-red-hot: var(--red-hot);
+  --color-gold: var(--gold);
+  --color-olive: var(--olive);
+  --color-line: var(--line);
+  --font-display: var(--font-display);
+  --font-mono: var(--font-mono);
+}
+
+* {
+  border-color: var(--line);
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--marquee);
+  color: var(--cream);
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+h1,
+h2,
+h3,
+h4,
+.font-display {
+  font-family: var(--font-display), sans-serif;
+  letter-spacing: 0.02em;
+}
+
+/* Fixed full-viewport film-grain texture, sits above everything but never
+   intercepts pointer events. Deliberately built with an SVG filter instead
+   of a downloaded texture image so the whole app has zero external asset
+   dependencies. */
+.grain-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+}
+
+.grain-overlay::after {
+  content: "";
+  position: absolute;
+  inset: -10%;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  animation: grain-shift 0.7s steps(4) infinite;
+}
+
+@keyframes grain-shift {
+  0% {
+    transform: translate(0, 0);
+  }
+  25% {
+    transform: translate(-2%, 1%);
+  }
+  50% {
+    transform: translate(1%, -2%);
+  }
+  75% {
+    transform: translate(-1%, -1%);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+.marquee-border {
+  border: 1px solid var(--line);
+}
+
+.ticket-notch {
+  background-image: radial-gradient(
+      circle at left,
+      transparent 8px,
+      var(--marquee) 8.5px
+    ),
+    radial-gradient(circle at right, transparent 8px, var(--marquee) 8.5px);
+  background-position:
+    left center,
+    right center;
+  background-size:
+    50% 100%,
+    50% 100%;
+  background-repeat: no-repeat;
+}
+
+.sprocket-rail {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--cream-dim) 0px,
+    var(--cream-dim) 6px,
+    transparent 6px,
+    transparent 16px
+  );
+  width: 3px;
+  opacity: 0.35;
+}
+
+@keyframes reel-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-reel {
+  animation: reel-spin 1.4s linear infinite;
+}
+
+.text-shadow-marquee {
+  text-shadow: 3px 3px 0 var(--marquee);
+}
+
+::selection {
+  background: var(--red);
+  color: var(--cream);
+}
