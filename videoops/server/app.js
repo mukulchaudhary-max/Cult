@@ -125,7 +125,7 @@ export function createApp() {
   const SORTS = {
     name: 'p.name COLLATE NOCASE', month: 'p.month', brand: 'p.brand COLLATE NOCASE', type: 'p.type COLLATE NOCASE', assignee: 'm.name COLLATE NOCASE',
     priority: `CASE p.priority WHEN 'Urgent' THEN 4 WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 ELSE 1 END`, status: `CASE p.status ${STATUSES.map((s, i) => `WHEN '${s}' THEN ${i}`).join(' ')} END`,
-    received: 'p.brief_received_at', deadline: 'p.deadline IS NULL, p.deadline', updated: 'p.updated_at', code: 'p.id', assignment: 'p.assign_mode',
+    received: 'p.brief_received_at', deadline: `p.status='Completed', p.deadline IS NULL, p.deadline`, updated: 'p.updated_at', code: 'p.id', assignment: 'p.assign_mode',
   };
   app.get('/api/projects', (req, res) => {
     const q = req.query, w = ['p.removed_from_sheet=0'], a = [];

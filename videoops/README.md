@@ -11,6 +11,8 @@ Google Sheet ──► monitor ──► detect new / changed rows ──► imp
      └──────── you edit ────────────┴── audit log + notifications + dashboard ◄─ you override anything
 ```
 
+Screenshots of every screen (handy as a backup deck): [docs/screenshots](docs/screenshots).
+
 ## Run it (60 seconds)
 
 Requires **Node 22.5+** (uses the built-in `node:sqlite`; no native modules).
