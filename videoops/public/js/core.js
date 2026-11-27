@@ -14,7 +14,7 @@ export const state = { settings: {}, team: [], statuses: [], priorities: [], typ
 // ───────────────────────── DOM
 export function h(tag, props, ...kids) {
   const el = typeof tag === 'string' ? document.createElement(tag) : tag;
-  if (props && (typeof props !== 'object' || props instanceof Node || Array.isArray(props) || typeof props === 'string')) { kids.unshift(props); props = null; }
+  if (props != null && (typeof props !== 'object' || props instanceof Node || Array.isArray(props))) { kids.unshift(props); props = null; }
   for (const [k, v] of Object.entries(props || {})) {
     if (v == null || v === false) continue;
     if (k === 'class') el.className = v;

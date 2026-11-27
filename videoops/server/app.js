@@ -282,7 +282,7 @@ export function createApp() {
     for (const m of Object.values(mm)) cols.push({ id: m.id, name: m.is_owner ? `${m.name} (you)` : m.name, color: m.color, is_owner: m.is_owner, projects: [] });
     const rows = all(`SELECT * FROM projects WHERE removed_from_sheet=0 AND status NOT IN ('Completed') ORDER BY deadline IS NULL, deadline`).map(P.hydrate);
     for (const p of rows) (cols.find((c) => c.id === p.assignee_id) || cols[0]).projects.push(decorate(p, mm, t));
-    res.json({ columns: cols, pending: cols[0].projects.length });
+    res.json({ columns: cols, pending: cols[0].projects.filter((p) => p.assign_mode !== 'locked').length });
   });
   app.post('/api/assignments/preview', wrap(async (req, res) => res.json(await P.autoAssignPending({ dryRun: true }))));
   app.post('/api/assignments/run', wrap(async (req, res) => res.json(await P.autoAssignPending({ actor: 'system' }))));
