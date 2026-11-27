@@ -23,10 +23,13 @@ Thanks,
 
 export const DEFAULTS = {
   workspace: { name: 'Cult Video Ops', owner_name: 'Production Lead', owner_email: 'production.lead@gmail.com' },
+  // This team only makes video & GIF: rows whose Asset Requirement has none of these codes are ignored. S=static V=video C=carousel G=GIF
+  assets: { import_codes: ['V', 'G'] },
   monitor: { enabled: true, interval_min: 5, auto_detect: true, detect_changes: true, autosync_on_sheet_edit: true },
   assign: {
     enabled: true,
     strategy: 'balance_total', // balance_total | equal_batch
+    weight_mode: 'deliverables', // deliverables = balance by number of videos/GIFs to make | projects = every project counts as 1
     weight_by_priority: false,
     preference_tolerance: 0,
     skip_unavailable: true,
@@ -38,7 +41,7 @@ export const DEFAULTS = {
     ignore_whitespace: true,
     email_digest_threshold: 5,
     fields: {
-      name: true, brand: true, type: true, brief: true, duration: true, deadline: true, priority: true,
+      name: true, brand: true, type: true, brief: true, duration: true, deadline: true, priority: true, assets: true,
       status: true, assignee: true, links: true, product: true, month: true, extra: true,
     },
   },
@@ -50,7 +53,7 @@ export const DEFAULTS = {
     assignment_subject: 'New Video Project Assigned – {{project_name}}',
     assignment_body: DEFAULT_ASSIGNMENT_BODY,
   },
-  reminders: { enabled: true, days_before: 2, email_assignee: true, overdue_alerts: true },
+  reminders: { enabled: true, days_before: 7, email_assignee: true, overdue_alerts: true },
   overrides: { sheet_can_override_manual: false, notify_previous_on_manual: true },
   notify: Object.fromEntries(Object.entries(NOTIFY_TYPES).map(([k, v]) => [k, { app: v.app, email: v.email }])),
   integrations: { sheet_mode: 'demo', spreadsheet_id: '', spreadsheet_url: '', sheet_title: '' },

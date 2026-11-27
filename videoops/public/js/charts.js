@@ -1,8 +1,8 @@
 /* Hand-rolled SVG charts — tiny, themed, accessible. All return DOM nodes. */
-import { h, esc } from './core.js';
+import { h } from './core.js';
 const NS = 'http://www.w3.org/2000/svg';
 export const svg = (tag, attrs = {}, ...kids) => { const e = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); kids.flat().forEach((c) => c != null && e.append(c)); return e; };
-const tipHtml = (label, value, extra) => `<b>${esc(label)}</b> <span class="m">${esc(value)}${extra ? ' · ' + esc(extra) : ''}</span>`;
+const tipHtml = (label, value, extra) => `<b>${label}</b> <span class="m">${value}${extra ? ' · ' + extra : ''}</span>`; // sanitised by the tooltip renderer in core.js
 
 /** donut({data:[{key,n,color}], size, thickness, center:{value,label}}) */
 export function donut({ data, size = 168, thickness = 18, center, onClick }) {

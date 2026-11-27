@@ -65,7 +65,18 @@ export function openDb(file = process.env.DB_PATH || path.join(process.cwd(), 'd
   store.db = new DatabaseSync(file);
   store.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = OFF;');
   store.db.exec(SCHEMA);
+  migrate();
   return store.db;
+}
+
+// additive migrations so an existing data/videoops.db keeps working after upgrades
+function migrate() {
+  const cols = (t) => store.db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
+  const add = (t, c, def) => { if (!cols(t).includes(c)) store.db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${def}`); };
+  add('projects', 'assets', 'TEXT');            // raw "2S, 2V, 1C, 1G"
+  add('projects', 'deliverables', 'INTEGER');   // number of items this team must make (e.g. videos + GIFs)
+  add('projects', 'collaborators', "TEXT DEFAULT '[]'"); // extra teammates named in the sheet's Owner cell
+  add('sync_runs', 'skipped', 'INTEGER DEFAULT 0');
 }
 
 const norm = (params) => params.map((p) => (p === undefined ? null : typeof p === 'boolean' ? (p ? 1 : 0) : p));

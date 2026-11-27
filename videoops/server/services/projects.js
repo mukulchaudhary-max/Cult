@@ -11,7 +11,7 @@ import * as T from './emailTemplates.js';
 
 export function hydrate(r) {
   if (!r) return null;
-  return { ...r, links: jparse(r.links, []), extra: jparse(r.extra, {}), flags: jparse(r.flags, []), sheet_snapshot: jparse(r.sheet_snapshot, null), removed_from_sheet: !!r.removed_from_sheet };
+  return { ...r, links: jparse(r.links, []), extra: jparse(r.extra, {}), flags: jparse(r.flags, []), collaborators: jparse(r.collaborators, []), sheet_snapshot: jparse(r.sheet_snapshot, null), removed_from_sheet: !!r.removed_from_sheet };
 }
 export const getProject = (id) => hydrate(get('SELECT * FROM projects WHERE id=?', id));
 export function getMember(id) {
@@ -22,14 +22,21 @@ export function hydrateMember(m) { return { ...m, enabled: !!m.enabled, is_owner
 export const allMembers = () => all('SELECT * FROM team_members ORDER BY is_owner DESC, name').map(hydrateMember);
 
 /** Existing workload per member (count + priority-weighted). */
+/** Weight of one project in a teammate's workload: videos/GIFs to make (deliverables mode) or 1; optionally × priority. */
+export function projectWeight(p, s = getSettings()) {
+  const base = s.assign.weight_mode === 'deliverables' ? Math.max(1, p.deliverables ?? 1) : 1;
+  return base * (s.assign.weight_by_priority ? PRIORITY_WEIGHT[p.priority] || 1 : 1);
+}
+
+/** Existing workload per member: project count, weighted load, and video/GIF deliverables. */
 export function memberLoads() {
   const s = getSettings();
   const skip = s.assign.count_on_hold ? `('Completed')` : `('Completed','On Hold')`;
-  const rows = all(`SELECT assignee_id, priority FROM projects WHERE assignee_id IS NOT NULL AND removed_from_sheet=0 AND status NOT IN ${skip}`);
+  const rows = all(`SELECT assignee_id, priority, deliverables FROM projects WHERE assignee_id IS NOT NULL AND removed_from_sheet=0 AND status NOT IN ${skip}`);
   const loads = {};
   for (const r of rows) {
-    const l = (loads[r.assignee_id] ||= { count: 0, weighted: 0 });
-    l.count += 1; l.weighted += PRIORITY_WEIGHT[r.priority] || 1;
+    const l = (loads[r.assignee_id] ||= { count: 0, weighted: 0, deliverables: 0 });
+    l.count += 1; l.weighted += projectWeight(r, s); l.deliverables += Math.max(1, r.deliverables ?? 1);
   }
   return loads;
 }
@@ -81,7 +88,7 @@ export async function assignProject(id, memberId, { mode = 'manual', actor = 'yo
   const next = memberId ? getMember(memberId) : null;
   if (memberId && !next) throw httpError('Teammate not found', 404);
   let nextMode = mode;
-  if (next?.is_owner) nextMode = 'self';
+  if (next?.is_owner && ['manual', 'self'].includes(mode)) nextMode = 'self';
   if (!next && mode !== 'locked') nextMode = 'auto';
   if ((prev?.id ?? null) === (next?.id ?? null) && p.assign_mode === nextMode) return { noop: true, project: p };
 
@@ -90,7 +97,7 @@ export async function assignProject(id, memberId, { mode = 'manual', actor = 'yo
   if (!next && p.status === 'Assigned') patch.status = 'Pending Assignment';
   if (!next && p.status === 'New Brief Received') patch.status = 'Pending Assignment';
   update('projects', id, patch);
-  if (next && !next.is_owner) update('team_members', next.id, { last_assigned_at: nowIso() });
+  if (next && nextMode !== 'self') update('team_members', next.id, { last_assigned_at: nowIso() });
 
   const why = reason || (actor === 'you' ? 'Changed manually' : actor === 'sheet' ? 'Assignee specified in Google Sheet' : 'Auto-assigned');
   insert('assignments', { project_id: id, from_member_id: prev?.id ?? null, to_member_id: next?.id ?? null, mode: nextMode, reason: why, actor, created_at: nowIso() });
@@ -101,7 +108,7 @@ export async function assignProject(id, memberId, { mode = 'manual', actor = 'yo
   const fresh = result.project;
   const by = s.workspace.owner_name;
   // email the new teammate
-  if (next && !next.is_owner && s.email.notify_assignee) {
+  if (next && nextMode !== 'self' && s.email.notify_assignee) {
     const mail = prev ? T.reassignedToEmail(fresh, next, prev, by) : T.assignmentEmail(fresh, next);
     const r = await sendEmail({ to: next.email, toName: next.name, kind: prev ? 'reassigned_to' : 'assignment', projectId: id, ...mail });
     if (r.ok) {
@@ -111,7 +118,7 @@ export async function assignProject(id, memberId, { mode = 'manual', actor = 'yo
     } else if (!quiet) await notify('assignment_confirmation', { title: `Could not email ${next.name}`, body: r.error, severity: 'warning', projectId: id, force: true });
   }
   // tell the previous teammate it moved
-  if (prev && !prev.is_owner && prev.id !== next?.id && s.email.notify_previous_assignee && s.overrides.notify_previous_on_manual) {
+  if (prev && p.assign_mode !== 'self' && prev.id !== next?.id && s.email.notify_previous_assignee && s.overrides.notify_previous_on_manual) {
     const r = await sendEmail({ to: prev.email, toName: prev.name, kind: 'reassigned_from', projectId: id, ...T.reassignedFromEmail(fresh, prev, next, by) });
     if (r.ok) result.emails++;
   }
@@ -124,12 +131,13 @@ export async function assignProject(id, memberId, { mode = 'manual', actor = 'yo
 /** Plan (dry-run) or execute automatic distribution of every unassigned, non-locked project. */
 export async function autoAssignPending({ dryRun = false, actor = 'system', ids = null } = {}) {
   const s = getSettings();
-  let pending = all(`SELECT id,name,priority,deadline,type,brand FROM projects WHERE assignee_id IS NULL AND assign_mode!='locked' AND status!='Completed' AND removed_from_sheet=0`);
+  let pending = all(`SELECT id,name,priority,deadline,type,brand,deliverables FROM projects WHERE assignee_id IS NULL AND assign_mode!='locked' AND status!='Completed' AND removed_from_sheet=0`);
   if (ids) pending = pending.filter((p) => ids.includes(p.id));
-  const members = allMembers().filter((m) => !m.is_owner);
+  const members = allMembers(); // the owner takes part too when they switch on "also take projects"
+  pending = pending.map((p) => ({ ...p, weight: projectWeight(p, s) }));
   const plan = planAssignments({
     projects: pending, members, loads: memberLoads(),
-    options: { strategy: s.assign.strategy, weightByPriority: s.assign.weight_by_priority, preferenceTolerance: s.assign.preference_tolerance, skipUnavailable: s.assign.skip_unavailable, defaultMaxActive: s.assign.default_max_active, today: today() },
+    options: { strategy: s.assign.strategy, unit: s.assign.weight_mode, weightByPriority: s.assign.weight_by_priority, preferenceTolerance: s.assign.preference_tolerance, skipUnavailable: s.assign.skip_unavailable, defaultMaxActive: s.assign.default_max_active, today: today() },
   });
   const byId = Object.fromEntries(pending.map((p) => [p.id, p]));
   const byMember = Object.fromEntries(members.map((m) => [m.id, m]));

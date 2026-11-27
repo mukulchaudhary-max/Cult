@@ -21,31 +21,35 @@ after(() => server.close());
 
 test('demo workspace is seeded with a balanced, realistic dataset', async () => {
   const { body: d } = await call('GET', '/api/dashboard');
-  assert.equal(d.counters.total, 35);
-  assert.ok(d.counters.overdue > 0 && d.counters.due_soon > 0 && d.counters.completed > 0);
-  const active = d.byTeammate.filter((t) => !t.owner && t.available).map((t) => t.active);
-  assert.ok(Math.max(...active) - Math.min(...active) <= 2, `workload spread too wide: ${active}`);
+  assert.equal(d.counters.total, 34);          // 34 video/GIF asks imported; the sheet's statics-only/legend rows are not
+  assert.ok(d.counters.due_soon > 0 && d.counters.in_progress > 0);
+  const team = d.byTeammate.filter((t) => !t.owner && t.available);
+  assert.equal(team.length, 5);                // 4 teammates + the PM, who also takes projects
+  const load = team.map((t) => t.deliverables);
+  assert.ok(Math.max(...load) - Math.min(...load) <= 4, `video/GIF workload spread too wide: ${load}`);
   assert.ok(d.impact.emailsSent > 30);
 });
 
 test('bootstrap exposes settings, team, months and mode', async () => {
   const { body } = await call('GET', '/api/bootstrap');
-  assert.equal(body.team.filter((m) => !m.is_owner).length, 5);
-  assert.deepEqual(body.months.map((m) => m.total).reduce((a, b) => a + b, 0), 35);
+  assert.deepEqual(body.team.map((m) => m.name).sort(), ['Antony T J', 'Enbarasan E', 'Gagan Solanki', 'Mukul Chaudhary', 'Shwetank']);
+  assert.equal(body.team.find((m) => m.is_owner).name, 'Mukul Chaudhary');
+  assert.deepEqual(body.settings.assets.import_codes, ['V', 'G']);
+  assert.deepEqual(body.months.map((m) => m.total).reduce((a, b) => a + b, 0), 34);
   assert.equal(body.mode.sheet, 'demo');
 });
 
 test('project list: search, filters, sort, pagination', async () => {
   let r = (await call('GET', '/api/projects?q=treadmill')).body;
   assert.ok(r.items.length >= 3 && r.items.every((p) => /treadmill/i.test(`${p.name} ${p.brand} ${p.brief} ${p.type}`)));
-  r = (await call('GET', '/api/projects?due=overdue')).body;
-  assert.ok(r.items.length > 0 && r.items.every((p) => p.overdue));
+  r = (await call('GET', '/api/projects?due=soon')).body;
+  assert.ok(r.items.length > 0 && r.items.every((p) => !p.overdue && p.days_to_deadline >= 0 && p.days_to_deadline <= 7));
   r = (await call('GET', '/api/projects?assignee=unassigned')).body;
   assert.ok(r.items.every((p) => !p.assignee_id));
   r = (await call('GET', '/api/projects?sort=priority&dir=desc&pageSize=5&page=2')).body;
-  assert.equal(r.items.length, 5); assert.equal(r.page, 2); assert.equal(r.total, 35);
+  assert.equal(r.items.length, 5); assert.equal(r.page, 2); assert.equal(r.total, 34);
   r = (await call('GET', "/api/projects?sort=deadline;DROP TABLE projects&dir=asc")).body; // injection attempt falls back safely
-  assert.equal(r.total, 35);
+  assert.equal(r.total, 34);
 });
 
 test('manual reassignment via API: history + both emails + workload moves', async () => {
@@ -126,11 +130,11 @@ test('email preview renders the editable template', async () => {
 
 test('demo simulator: add-month → sync creates the next month, JSON content-type enforced, errors are JSON', async () => {
   const a = (await call('POST', '/api/demo/sheet/add-month', {})).body;
-  assert.equal(a.added, 14);
+  assert.equal(a.added, 15);                   // the 15 held-back real asks arrive
   const s = (await call('POST', '/api/sync/run', {})).body;
-  assert.equal(s.status, 'success'); assert.equal(s.created, 14); assert.equal(s.assigned, 14);
+  assert.equal(s.status, 'success'); assert.equal(s.created, 15); assert.equal(s.assigned, 15);
   const months = (await call('GET', '/api/months')).body;
-  assert.equal(months[0].total, 14);
+  assert.equal(months[0].total, 49);
   const bad = await fetch(base + '/api/projects/1/comments', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: 'x=1' });
   assert.equal(bad.status, 415);
   assert.equal((await call('GET', '/api/nope')).status, 404);

@@ -23,13 +23,17 @@ export default async function render(ctx) {
   let team = [];
   const wrap = h('div'); root.append(wrap);
   wrap.append(h('div', { class: 'skeleton', style: 'height:200px' }));
+  // workload unit: videos+GIFs to make (default) or plain project count
+  const byDel = () => state.settings.assign?.weight_mode === 'deliverables';
+  const load_ = (m) => (byDel() ? m.deliverables : m.active);
+  const unitLbl = () => (byDel() ? 'videos & GIFs' : 'projects');
   const load = async () => { team = await api.get('/api/team'); draw(); };
   const mutated = async () => { refreshBootstrap(); await load(); };
 
   function draw() {
-    const mates = team.filter((m) => !m.is_owner), owner = team.find((m) => m.is_owner);
+    const mates = team.filter((m) => !m.is_owner || m.enabled), owner = team.find((m) => m.is_owner && !m.enabled);
     const avail = mates.filter((m) => m.available);
-    const counts = avail.map((m) => m.active);
+    const counts = avail.map(load_);
     const avg = counts.length ? counts.reduce((a, b) => a + b, 0) / counts.length : 0;
     const score = balance(counts);
     wrap.replaceChildren(
@@ -43,37 +47,39 @@ export default async function render(ctx) {
   }
 
   function workloadPanel(mates, avail, avg, score) {
-    const scale = Math.max(1, ...avail.map((m) => m.max_active || 0), ...avail.map((m) => m.active), avg * 1.3) * 1.12;
-    const loadColor = (m) => (m.active > avg + 1.5 ? 'var(--coral)' : m.active > avg + 0.5 ? 'var(--amber)' : m.active < avg - 1 ? 'var(--blue)' : 'var(--teal)');
+    const spread = byDel() ? 2 : 1;
+    const scale = Math.max(1, ...avail.map(load_), avg * 1.3) * 1.12;
+    const loadColor = (m) => (load_(m) > avg + 1.5 * spread ? 'var(--coral)' : load_(m) > avg + 0.5 * spread ? 'var(--amber)' : load_(m) < avg - spread ? 'var(--blue)' : 'var(--teal)');
     const out = mates.filter((m) => !m.available);
     return h('div', { class: 'tm-summary' },
       h('div', { class: 'card tm-balance' }, ring({ value: score, size: 86, thickness: 9, color: score >= 80 ? 'var(--green)' : score >= 60 ? 'var(--amber)' : 'var(--coral)', label: String(score) }),
         h('div', h('h3', 'Balance score'), h('div', { class: 'muted', style: 'font-size:12.5px;line-height:1.5' }, score >= 85 ? 'Workload is evenly spread across available teammates.' : 'Some teammates carry noticeably more than others. New briefs go to the least loaded.'))),
-      h('div', { class: 'card' }, h('div', { class: 'card-h' }, h('h3', 'Team workload'), h('span', { class: 'sub' }, 'Active projects per available teammate'), h('div', { class: 'right dim', style: 'font-size:11.5px;display:flex;gap:12px;align-items:center' }, h('span', { class: 'row gap-6' }, h('i', { style: 'width:2px;height:12px;background:var(--text);opacity:.75;display:block' }), `Avg ${avg.toFixed(1)}`))),
+      h('div', { class: 'card' }, h('div', { class: 'card-h' }, h('h3', 'Team workload'), h('span', { class: 'sub' }, `Active ${unitLbl()} per available teammate`), h('div', { class: 'right dim', style: 'font-size:11.5px;display:flex;gap:12px;align-items:center' }, h('span', { class: 'row gap-6' }, h('i', { style: 'width:2px;height:12px;background:var(--text);opacity:.75;display:block' }), `Avg ${avg.toFixed(1)}`))),
         h('div', { class: 'card-b col gap-12' }, avail.length ? avail.map((m) => h('div', { class: 'tm-load-row' },
           h('div', { class: 'row gap-8', style: 'min-width:0' }, avatar(m, 22), h('span', { class: 'trunc', style: 'font-weight:550;font-size:12.5px' }, m.name)),
-          h('div', { class: 'tm-track' }, h('i', { style: { width: `${(m.active / scale) * 100}%`, '--c': loadColor(m) } }), h('b', { style: { left: `${(avg / scale) * 100}%` } }), m.max_active ? h('u', { style: { left: `${(m.max_active / scale) * 100}%` }, 'data-tip': `Capacity cap: ${m.max_active}` }) : null),
-          h('div', { class: 'mono muted num', style: 'text-align:right;font-size:12px' }, m.max_active ? `${m.active}/${m.max_active}` : String(m.active)))) : h('div', { class: 'dim' }, 'No teammates are currently available.'),
+          h('div', { class: 'tm-track' }, h('i', { style: { width: `${(load_(m) / scale) * 100}%`, '--c': loadColor(m) } }), h('b', { style: { left: `${(avg / scale) * 100}%` } })),
+          h('div', { class: 'mono muted num', style: 'text-align:right;font-size:12px', 'data-tip': `${m.active} projects · ${m.deliverables} videos/GIFs` }, String(load_(m))))) : h('div', { class: 'dim' }, 'No teammates are currently available.'),
           out.length ? h('div', { class: 'dim', style: 'font-size:11.5px;padding-top:4px;border-top:1px solid var(--line)' }, `Not receiving new projects: ${out.map((m) => `${m.name.split(' ')[0]} (${m.onLeave ? 'on leave' : !m.enabled ? 'auto-assign off' : 'unavailable'})`).join(', ')}`) : null)));
   }
 
   function card(m) {
-    const avgAll = team.filter((x) => !x.is_owner && x.available).map((x) => x.active); const avg = avgAll.length ? avgAll.reduce((a, b) => a + b, 0) / avgAll.length : 0;
+    const avgAll = team.filter((x) => (!x.is_owner || x.enabled) && x.available).map(load_); const avg = avgAll.length ? avgAll.reduce((a, b) => a + b, 0) / avgAll.length : 0;
     const [label, color] = stateOf(m);
-    const cap = m.max_active, pctBase = cap || Math.max(...team.filter((x) => !x.is_owner).map((x) => x.active), 1) * 1.15;
-    const col = m.active > avg + 1.5 ? 'var(--coral)' : m.active > avg + 0.5 ? 'var(--amber)' : m.active < avg - 1 ? 'var(--blue)' : 'var(--teal)';
+    const cap = m.max_active, pctBase = Math.max(...team.filter((x) => !x.is_owner || x.enabled).map(load_), 1) * 1.15;
+    const sp = byDel() ? 2 : 1;
+    const col = load_(m) > avg + 1.5 * sp ? 'var(--coral)' : load_(m) > avg + 0.5 * sp ? 'var(--amber)' : load_(m) < avg - sp ? 'var(--blue)' : 'var(--teal)';
     const p = m.prefs || {};
     const chips = [...(p.preferred_types || []).map((t) => [t, 'var(--teal)']), ...(p.preferred_brands || []).map((t) => [t, 'var(--teal)']), ...(p.excluded_types || []).map((t) => [`No ${t}`, 'var(--coral)']), ...(p.excluded_brands || []).map((t) => [`No ${t}`, 'var(--coral)'])];
     const mbtn = h('button', { class: 'icon-btn', 'aria-label': 'Teammate actions', onClick: () => menu(mbtn, [
       { label: 'Edit teammate', icon: 'edit', onClick: () => editor(m) },
       { label: m.availability === 'unavailable' || m.onLeave ? 'Set available' : 'Set unavailable', icon: m.availability === 'unavailable' || m.onLeave ? 'check' : 'pause', onClick: () => quickAvail(m) },
-      { divider: true }, { label: 'Remove teammate', icon: 'trash', onClick: () => remove(m) }]) }, icon('more', 18));
+      ...(m.is_owner ? [] : [{ divider: true }, { label: 'Remove teammate', icon: 'trash', onClick: () => remove(m) }])]) }, icon('more', 18));
     return h('div', { class: `card tm-card ${m.available ? '' : 'off'}` },
-      h('div', { class: 'tm-top' }, avatar(m, 42), h('div', { class: 'grow', style: 'min-width:0' }, h('div', { class: 'nm' }, m.name), h('div', { class: 'role' }, m.role || 'AI Video Editor'), h('div', { class: 'tm-mail' }, icon('mail', 12), m.email)), mbtn),
+      h('div', { class: 'tm-top' }, avatar(m, 42), h('div', { class: 'grow', style: 'min-width:0' }, h('div', { class: 'nm' }, m.is_owner ? `${m.name} (you)` : m.name), h('div', { class: 'role' }, m.is_owner ? 'Project Manager · also takes projects' : (m.role || 'AI Video Editor')), h('div', { class: 'tm-mail' }, icon('mail', 12), m.email)), mbtn),
       h('div', { class: 'row wrap gap-6' }, h('span', { class: 'tm-state', style: { '--c': color } }, h('i'), label), !m.enabled ? h('span', { class: 'tag' }, 'Auto-assign off') : null),
-      h('div', { class: 'tm-meter' }, h('div', { class: 'top' }, h('span', h('b', String(m.active)), 'active project' + (m.active === 1 ? '' : 's')), h('span', { class: 'dim' }, cap ? `cap ${cap}` : `team avg ${avg.toFixed(1)}`)),
-        h('div', { class: 'progress' }, h('i', { style: { width: `${Math.min(100, (m.active / pctBase) * 100)}%`, '--c': col } }))),
-      h('div', { class: 'tm-stats' }, stat(m.active, 'In flight'), stat(m.completed, 'Completed'), stat(m.overdue, 'Overdue', m.overdue > 0)),
+      h('div', { class: 'tm-meter' }, h('div', { class: 'top' }, h('span', h('b', String(load_(m))), ` active ${unitLbl()}`), h('span', { class: 'dim' }, cap ? `cap ${cap} projects` : `team avg ${avg.toFixed(1)}`)),
+        h('div', { class: 'progress' }, h('i', { style: { width: `${Math.min(100, (load_(m) / pctBase) * 100)}%`, '--c': col } }))),
+      h('div', { class: 'tm-stats' }, stat(m.active, 'Projects'), stat(m.deliverables, 'Videos/GIFs'), stat(m.overdue, 'Overdue', m.overdue > 0)),
       chips.length ? h('div', { class: 'tm-chips' }, chips.map(([t, c]) => h('span', { class: 'tm-chip', style: { '--c': c } }, t))) : h('div', { class: 'dim', style: 'font-size:12px' }, 'No assignment preferences set'),
       m.projects.length ? h('details', { class: 'tm-proj' }, h('summary', icon('right', 13), `Ongoing projects (${m.projects.length})`), h('div', { class: 'tm-plist' }, m.projects.map((pr) => h('div', { class: 'tm-pitem', onClick: () => go(`#/projects/${pr.id}`) }, h('div', h('div', { class: 'n' }, pr.name), h('div', { class: 'c' }, pr.code)), h('div', { class: 'col gap-4', style: 'align-items:flex-end' }, dueTag(pr), statusPill(pr.status)))))) : h('div', { class: 'dim', style: 'font-size:12px' }, 'No ongoing projects'),
       h('div', { class: 'tm-auto' }, h('span', { class: 'grow' }, h('span', { class: 't' }, 'Auto-assign'), h('span', { class: 'dim' }, m.enabled ? ' · receives new briefs' : ' · skipped by automation')),
@@ -82,8 +88,10 @@ export default async function render(ctx) {
   const stat = (n, l, bad) => h('div', { class: `tm-stat ${bad ? 'bad' : ''}` }, h('b', String(n)), h('span', l));
 
   function ownerRow(o) {
-    return h('div', { class: 'card tm-owner' }, avatar(o, 38), h('div', { class: 'grow' }, h('div', { style: 'font-weight:620' }, `${o.name} (you)`), h('div', { class: 'dim', style: 'font-size:12px' }, 'Project Manager · only assigned manually via “Assign to me”')),
-      h('div', { class: 'tm-stat', style: 'min-width:92px' }, h('b', String(o.active)), h('span', 'Assigned to me')), o.projects.length ? h('a', { class: 'btn sm', href: `#/projects?assignee=${o.id}` }, 'View', icon('arrow', 13)) : null);
+    return h('div', { class: 'card tm-owner' }, avatar(o, 38), h('div', { class: 'grow' }, h('div', { style: 'font-weight:620' }, `${o.name} (you)`), h('div', { class: 'dim', style: 'font-size:12px' }, 'Project Manager · not receiving auto-assigned projects — only “Assign to me”')),
+      h('div', { class: 'tm-stat', style: 'min-width:92px' }, h('b', String(o.active)), h('span', 'Assigned to me')),
+      h('label', { class: 'row gap-8', style: 'cursor:pointer' }, toggle({ checked: false, label: 'Also take projects', onChange: async (v) => { const r = await act(() => api.patch(`/api/team/${o.id}`, { enabled: v }), 'You will now receive auto-assigned projects'); if (r) mutated(); } }), h('span', { class: 'muted', style: 'font-size:12.5px' }, 'Also take projects')),
+      o.projects.length ? h('a', { class: 'btn sm', href: `#/projects?assignee=${o.id}` }, 'View', icon('arrow', 13)) : null);
   }
 
   async function quickAvail(m) {

@@ -13,8 +13,7 @@ import { PRIORITY_RANK, PRIORITY_WEIGHT } from '../constants.js';
 const FACTOR = { available: 1, limited: 0.5, unavailable: 0 };
 
 export function eligibility(member, project, { today, skipUnavailable = true, defaultMaxActive = null }, load) {
-  if (member.is_owner) return { ok: false, reason: 'Owner — only assigned manually' };
-  if (!member.enabled) return { ok: false, reason: 'Auto-assignment disabled' };
+  if (!member.enabled) return { ok: false, reason: member.is_owner ? 'You are not taking auto-assigned projects' : 'Auto-assignment disabled' };
   if (skipUnavailable) {
     if (member.availability === 'unavailable') return { ok: false, reason: 'Marked unavailable' };
     if (member.leave_until && today && member.leave_until >= today) return { ok: false, reason: `On leave until ${member.leave_until}` };
@@ -47,7 +46,8 @@ export function planAssignments({ projects, members, loads = {}, options = {} })
     const l = loads[m.id] || { count: 0, weighted: 0 };
     state.set(m.id, { m, count: l.count || 0, weighted: l.weighted ?? l.count ?? 0, batch: 0, batchWeighted: 0, factor: FACTOR[m.availability] ?? 1 });
   }
-  const weight = (p) => (opts.weightByPriority ? PRIORITY_WEIGHT[p.priority] || 1 : 1);
+  // project.weight (e.g. number of videos/GIFs) wins; otherwise 1, optionally scaled by priority
+  const weight = (p) => (p.weight != null ? p.weight : opts.weightByPriority ? PRIORITY_WEIGHT[p.priority] || 1 : 1);
   const ordered = [...projects].sort((a, b) =>
     (PRIORITY_RANK[b.priority] || 2) - (PRIORITY_RANK[a.priority] || 2)
     || (a.deadline || '9999').localeCompare(b.deadline || '9999') || a.id - b.id);
@@ -56,7 +56,7 @@ export function planAssignments({ projects, members, loads = {}, options = {} })
   const skippedMembers = new Map(); // memberId -> reason (for explainability)
   for (const m of members) {
     const e = eligibility(m, null, { ...opts, today: opts.today }, null);
-    if (!e.ok && !m.is_owner) skippedMembers.set(m.id, e.reason);
+    if (!e.ok) skippedMembers.set(m.id, e.reason);
   }
 
   for (const p of ordered) {
@@ -99,16 +99,19 @@ export function planAssignments({ projects, members, loads = {}, options = {} })
     pick.batchWeighted += weight(p);
     const others = cands.length - 1;
     const reasonBits = [];
+    const wBefore = Math.round((pick.weighted + pick.batchWeighted - weight(p)) * 10) / 10;
     reasonBits.push(opts.strategy === 'equal_batch'
       ? `Fair share of this batch (${pick.batch} so far)`
-      : `Lowest workload (${workloadBefore} active) among ${cands.length} available teammate${cands.length > 1 ? 's' : ''}`);
+      : opts.unit === 'deliverables'
+        ? `Lowest workload (${wBefore} video/GIF items, ${workloadBefore} project${workloadBefore === 1 ? '' : 's'}) among ${cands.length} available teammate${cands.length > 1 ? 's' : ''}`
+        : `Lowest workload (${workloadBefore} active) among ${cands.length} available teammate${cands.length > 1 ? 's' : ''}`);
     if (matched) reasonBits.push(`matches preference for ${p.type || p.brand}`);
     if (pick.factor < 1) reasonBits.push('limited availability weighting');
     assignments.push({ projectId: p.id, memberId: pick.m.id, reason: reasonBits.join(' · '), workloadBefore, considered: cands.length, others });
   }
 
   const loadsAfter = {};
-  for (const s of state.values()) loadsAfter[s.m.id] = { before: s.count, added: s.batch, after: s.count + s.batch };
+  for (const s of state.values()) loadsAfter[s.m.id] = { before: s.count, added: s.batch, after: s.count + s.batch, weightBefore: s.weighted, weightAdded: s.batchWeighted, weightAfter: s.weighted + s.batchWeighted };
   return { assignments, unassigned, loadsAfter, skippedMembers: Object.fromEntries(skippedMembers) };
 }
 

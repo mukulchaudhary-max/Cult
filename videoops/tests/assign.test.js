@@ -48,7 +48,7 @@ test('equal_batch gives everyone the same share regardless of existing load', ()
 
 test('unavailable, on-leave, disabled and owner are never assigned', () => {
   const members = mk(5);
-  members[0].availability = 'unavailable'; members[1].leave_until = '2026-12-10'; members[2].enabled = false; members[4].is_owner = true;
+  members[0].availability = 'unavailable'; members[1].leave_until = '2026-12-10'; members[2].enabled = false; members[4].is_owner = true; members[4].enabled = false; // owner not taking projects
   const plan = planAssignments({ projects: projs(6), members, options: { today: '2026-12-01' } });
   assert.deepEqual(Object.keys(counts(plan)), ['4']);
   assert.match(plan.skippedMembers[2], /leave/);
@@ -103,6 +103,20 @@ test('deterministic: same input => same output', () => {
   const a = planAssignments({ projects: projs(10), members: mk(3) });
   const b = planAssignments({ projects: projs(10), members: mk(3) });
   assert.deepEqual(a.assignments, b.assignments);
+});
+
+test('owner takes projects like anyone else when enabled', () => {
+  const members = mk(3); members[2].is_owner = true;
+  const plan = planAssignments({ projects: projs(6), members });
+  assert.deepEqual(Object.values(counts(plan)), [2, 2, 2]);
+});
+
+test('weights (videos/GIFs) balance effort, not project count', () => {
+  const ps = [3, 1, 1, 1, 1, 1].map((w, i) => ({ id: 200 + i, priority: 'Medium', deadline: `2026-12-0${i + 1}`, type: 'x', brand: 'y', weight: w }));
+  const plan = planAssignments({ projects: ps, members: mk(2) });
+  const after = Object.values(plan.loadsAfter).map((l) => l.weightAfter);
+  assert.deepEqual(after.sort(), [4, 4]);          // 3+1 vs 1+1+1+1
+  assert.deepEqual(Object.values(counts(plan)).sort(), [2, 4]); // project counts differ on purpose
 });
 
 test('balanceScore', () => {

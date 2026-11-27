@@ -4,18 +4,25 @@
 import { all, get, run, tx } from '../db.js';
 import { getSettings } from '../settings.js';
 import { jparse } from '../util.js';
+import { getKV, setKV } from '../settings.js';
 import { fetchSheetSnapshot } from './google.js';
 
 export const DEMO_SPREADSHEET_ID = 'demo-cult-video-briefs';
 export const DEMO_HEADERS = ['Month', 'Project Name', 'Brand / Campaign', 'Project Type', 'Brief', 'Duration (sec)', 'Delivery Date', 'Priority', 'Status', 'Assigned To', 'Reference Links', 'Product Info', 'Notes'];
 
+/** Column headers of the simulated sheet (set by the seed from a real sheet's header row; generic default otherwise). */
+export const demoHeaders = () => getKV('demo_headers') || DEMO_HEADERS;
+export const setDemoHeaders = (h) => setKV('demo_headers', h);
+export const demoTitle = () => getKV('demo_title') || 'Cult — Monthly Video Briefs (Demo Sheet)';
+
 export function demoSnapshot() {
   const tabs = all('SELECT * FROM demo_tabs ORDER BY position');
+  const headers = demoHeaders();
   return {
-    title: 'Cult — Monthly Video Briefs (Demo Sheet)', spreadsheetId: DEMO_SPREADSHEET_ID,
+    title: demoTitle(), spreadsheetId: DEMO_SPREADSHEET_ID,
     tabs: tabs.map((t) => ({
-      name: t.name, gid: t.gid, headers: DEMO_HEADERS,
-      rows: all('SELECT * FROM demo_sheet WHERE tab=? ORDER BY row_number', t.name).map((r) => ({ rowNumber: r.row_number, values: { ...Object.fromEntries(DEMO_HEADERS.map((h) => [h, ''])), ...jparse(r.data, {}) } })),
+      name: t.name, gid: t.gid, headers,
+      rows: all('SELECT * FROM demo_sheet WHERE tab=? ORDER BY row_number', t.name).map((r) => ({ rowNumber: r.row_number, values: { ...Object.fromEntries(headers.map((h) => [h, ''])), ...jparse(r.data, {}) } })),
     })),
   };
 }
@@ -39,14 +46,19 @@ export function sheetLink(project) {
 }
 
 // ---- demo-sheet editing helpers (used by the simulator UI) ----------------------------------
-export function ensureDemoTab(name) {
+export function ensureDemoTab(name, gid) {
   if (get('SELECT 1 x FROM demo_tabs WHERE name=?', name)) return;
   const pos = (get('SELECT MAX(position) p FROM demo_tabs')?.p ?? -1) + 1;
-  run('INSERT INTO demo_tabs(name,gid,position) VALUES(?,?,?)', name, String(1000 + pos), pos);
+  run('INSERT INTO demo_tabs(name,gid,position) VALUES(?,?,?)', name, gid || String(1000 + pos), pos);
+}
+/** Put a row at an explicit row number (used to replay a real sheet exactly). */
+export function demoPutRow(tab, row, data) {
+  ensureDemoTab(tab);
+  run('INSERT OR REPLACE INTO demo_sheet(tab,row_number,data) VALUES(?,?,?)', tab, row, JSON.stringify(data));
 }
 export function demoAddRow(tab, data) {
   ensureDemoTab(tab);
-  const next = (get('SELECT MAX(row_number) n FROM demo_sheet WHERE tab=?', tab)?.n ?? 1) + 1;
+  const next = Math.max((get('SELECT MAX(row_number) n FROM demo_sheet WHERE tab=?', tab)?.n ?? 1), 1) + 1;
   run('INSERT INTO demo_sheet(tab,row_number,data) VALUES(?,?,?)', tab, next, JSON.stringify(data));
   return next;
 }

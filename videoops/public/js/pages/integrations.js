@@ -1,6 +1,6 @@
 import { h, api, act, icon, fmt, state, toast, go, syncNow, confirmDialog, segmented, clear, liveOn, refreshBootstrap, statusPill, debounce } from '../core.js';
 
-const FIELD_NAMES = { id: 'Project ID', month: 'Month', name: 'Project name', brand: 'Brand / campaign', type: 'Project type', brief: 'Brief', duration: 'Duration', deadline: 'Delivery date', priority: 'Priority', status: 'Status', assignee: 'Assigned to', links: 'Reference links', product: 'Product info' };
+const FIELD_NAMES = { revised: 'Revised date', assets: 'Asset requirement (S/V/C/G)', 'brief:angle': 'Brief · Angle', 'brief:concept': 'Brief · Concept', 'brief:messaging': 'Brief · Messaging', 'brief:imagery': 'Brief · Imagery', id: 'Project ID', month: 'Month', name: 'Project name', brand: 'Brand / campaign', type: 'Project type', brief: 'Brief', duration: 'Duration', deadline: 'Delivery date', priority: 'Priority', status: 'Status', assignee: 'Assigned to', links: 'Reference links', product: 'Product info' };
 const colLetter = (i) => String.fromCharCode(65 + i);
 
 function toastSync(r) {
@@ -33,26 +33,23 @@ export default async function render(ctx) {
   const showResult = (r) => {
     if (!r || r.status === 'failed') return;
     dirResult.classList.remove('hide');
-    dirResult.replaceChildren(icon('zap', 15), h('div', h('b', 'Automation result'), h('div', { class: 'muted' }, [`${r.created} created`, `${r.updated} updated`, `${r.changes} field changes`, `${r.assigned} assigned`, `${r.flagged} flagged`, `${r.emails} emails`].join(' · '))),
+    dirResult.replaceChildren(icon('zap', 15), h('div', h('b', 'Automation result'), h('div', { class: 'muted' }, [`${r.created} created`, `${r.updated} updated`, `${r.changes} field changes`, `${r.assigned} assigned`, `${r.flagged} flagged`, `${r.skipped || 0} ignored (no video/GIF)`, `${r.emails} emails`].join(' · '))),
       h('div', { class: 'row gap-6 end' }, r.created ? h('a', { class: 'btn sm', href: '#/assignments' }, 'See assignments') : null, r.changes ? h('a', { class: 'btn sm', href: '#/changes' }, 'See change log') : null, h('a', { class: 'btn sm', href: '#/notifications' }, 'Notifications'), h('a', { class: 'btn sm primary', href: '#/dashboard' }, 'Dashboard')));
   };
-  const monthTab = () => (sim.tabs.find((t) => t.name.startsWith(new Date(`${state.today}T00:00:00`).toLocaleString('en', { month: 'short' }))) || sim.tabs.at(-1)).name;
+  const FH = () => sim.fieldHeaders; // field -> this sheet's column header
+  const rowByName = (name) => { for (const t of sim.tabs) { const r = t.rows.find((x) => String(x.values[FH().name]).trim() === name); if (r) return [t, r]; } return []; };
+  const setCell = (name, field, value) => { const [t, r] = rowByName(name); if (!r) throw new Error(`“${name}” is not in the sheet — use Reset demo`); return api.patch('/api/demo/sheet/cell', { tab: t.name, row: r.rowNumber, header: FH()[field], value }); };
   const scenarios = [
-    ['1', 'inbox', 'A new month’s briefs land in the sheet', 'Adds the next month’s tab with 14 briefs — two already name a teammate, one is missing a deadline, one has no brief.', async () => { const a = await api.post('/api/demo/sheet/add-month'); toast(`${a.added} rows added to “${a.tab}”`, { type: 'info' }); await syncAnd(); }],
-    ['2', 'edit', 'Someone changes a delivery date', 'Moves the TM-300 hero ad delivery date by +3 days in the sheet. Watch the change get detected, logged and emailed.', async () => {
-      const tab = sim.tabs.find((t) => t.rows.some((r) => r.values['Project Name'] === 'Cult Treadmill TM-300 Hero Ad')); if (!tab) throw new Error('TM-300 project not found in the sheet');
-      const row = tab.rows.find((r) => r.values['Project Name'] === 'Cult Treadmill TM-300 Hero Ad'); const d = new Date(`${row.values['Delivery Date']}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 3);
-      await api.patch('/api/demo/sheet/cell', { tab: tab.name, row: row.rowNumber, header: 'Delivery Date', value: d.toISOString().slice(0, 10) }); await syncAnd(); }],
-    ['3', 'flag', 'A brief arrives incomplete', 'Adds a project with no deadline, brief or links. It is flagged for you — and still assigned automatically.', async () => {
-      const n = sim.tabs.reduce((a, t) => a + t.rows.length, 0);
-      await api.post('/api/demo/sheet/row', { tab: monthTab(), data: { Month: '', 'Project Name': `Cult Pre-Launch Teaser #${n}`, 'Brand / Campaign': 'Cult Gear', Priority: 'High', 'Project Type': '', Brief: '', 'Delivery Date': '' } }); await syncAnd(); }],
-    ['4', 'users', 'Someone is renamed or reassigned in the sheet', 'Renames a project in place — the platform updates the same project instead of creating a duplicate.', async () => {
-      const tab = sim.tabs.find((t) => t.rows.some((r) => r.values['Project Name'] === 'Cult Yoga Studio Class Teasers')); if (!tab) throw new Error('Demo project not found');
-      const row = tab.rows.find((r) => r.values['Project Name'] === 'Cult Yoga Studio Class Teasers');
-      await api.patch('/api/demo/sheet/cell', { tab: tab.name, row: row.rowNumber, header: 'Project Name', value: 'Cult Yoga Flow Class Teasers (Winter)' }); await syncAnd(); }],
+    ['1', 'inbox', 'New asks are added to the sheet', 'Adds the next 15 real asks (treadmills, walkpads, massage chairs…) to the sheet. They are detected, imported, shared out by video/GIF workload, and every editor is emailed.', async () => { const a = await api.post('/api/demo/sheet/add-month'); toast(`${a.added} rows added to “${a.tab}”`, { type: 'info' }); await syncAnd(); }],
+    ['2', 'edit', 'A revised date changes', 'Sets a new “Revised Dates” on Canoas black Treadmill. The effective deadline moves, the change is detected, logged and emailed to you.', async () => { await setCell('Canoas black Treadmill', 'revised', '10th Dec'); await syncAnd(); }],
+    ['3', 'flag', 'Mixed asks arrive: static-only + incomplete video', 'A statics/carousel-only ask (ignored — not video/GIF) and a video ask with no date or brief (flagged for you, still auto-assigned).', async () => {
+      const tab = sim.tabs.at(-1).name; const n = sim.tabs.reduce((a, t) => a + t.rows.length, 0);
+      await api.post('/api/demo/sheet/row', { tab, data: { [FH().name]: 'Cult Store Banner Refresh', [FH().brand]: 'Apparel', [FH().assets]: '4S, 2C', [FH().deadline]: '20/12/26', [FH().type]: 'Batch Produce' } });
+      await api.post('/api/demo/sheet/row', { tab, data: { [FH().name]: `Pre-Launch Teaser #${n}`, [FH().brand]: 'Accesories', [FH().assets]: '1V', [FH().type]: 'Creative Concepts' } }); await syncAnd(); }],
+    ['4', 'users', 'A project is renamed in the sheet', 'Renames “Barefoot” in place — the same project updates, no duplicate is created.', async () => { await setCell('Barefoot', 'name', 'Barefoot Runner (Launch)'); await syncAnd(); }],
   ];
   const director = h('section', { class: 'card director' },
-    h('div', { class: 'a-head' }, h('div', { class: 'a-ico accent' }, icon('play', 18)), h('div', { class: 'grow' }, h('h3', 'Demo director'), h('div', { class: 'dim', style: 'font-size:12.5px' }, 'Each button edits the simulated Google Sheet exactly like a teammate would — then the monitor picks it up and the whole workflow runs.')),
+    h('div', { class: 'a-head' }, h('div', { class: 'a-ico accent' }, icon('play', 18)), h('div', { class: 'grow' }, h('h3', 'Demo director'), h('div', { class: 'dim', style: 'font-size:12.5px' }, 'Each button edits the simulated copy of your Google Sheet exactly like a teammate would — then the monitor picks it up and the whole workflow runs.')),
       h('button', { class: 'btn sm danger', onClick: async () => { if (await confirmDialog({ title: 'Reset demo data?', message: 'Rebuilds the demo workspace from scratch (projects, history, notifications). Your settings stay.', confirmLabel: 'Reset demo', danger: true })) { await act(() => api.post('/api/demo/reset'), 'Demo workspace reset'); await refreshBootstrap(); dirResult.classList.add('hide'); await loadSim(); } } }, icon('refresh', 13), 'Reset demo')),
     h('div', { class: 'dir-grid' }, scenarios.map(([n, ico, t, d, fn]) => { const b = h('button', { class: 'scn' }, h('span', { class: 'scn-n mono' }, n), h('div', h('div', { class: 'scn-t' }, t), h('div', { class: 'scn-d' }, d)), icon('arrow', 15)); b.addEventListener('click', () => runScenario(b, fn)); return b; })),
     dirResult);
@@ -68,7 +65,7 @@ export default async function render(ctx) {
   const sheetInput = h('input', { class: 'input', placeholder: 'https://docs.google.com/spreadsheets/d/…', value: info.sheet.url || '', disabled: !info.connected });
   const sheetCard = h('div', { class: 'card conn' },
     h('div', { class: 'conn-h' }, h('div', { class: 'conn-ico' }, icon('sheet', 20)), h('div', { class: 'grow' }, h('h3', 'Google Sheet'), h('div', { class: 'dim' }, 'Monthly requirements & briefs')), h('span', { class: 'pill', style: { '--c': demo ? 'var(--accent)' : 'var(--green)' } }, demo ? 'Demo sheet' : 'Live')),
-    demo ? h('div', { class: 'col gap-8' }, h('div', h('b', 'Cult — Monthly Video Briefs'), h('span', { class: 'dim' }, ' (simulated)')), h('div', { class: 'dim' }, 'Edit it below in the Sheet Simulator to see detection live.'))
+    demo ? h('div', { class: 'col gap-8' }, h('div', h('b', 'Demo'), h('span', { class: 'dim' }, " — simulated copy of “December'26 Asks 1P & Perf”")), h('div', { class: 'dim' }, 'Edit it below in the Sheet Simulator to see detection live.'))
       : h('div', { class: 'col gap-8' }, h('div', h('b', info.sheet.title)), h('a', { class: 'btn sm', href: info.sheet.url, target: '_blank', rel: 'noopener' }, icon('ext', 13), 'Open sheet')),
     h('div', { class: 'row gap-8 mt-12' }, sheetInput, h('button', { class: 'btn', disabled: !info.connected, onClick: async (e) => { e.currentTarget.disabled = true; const r = await act(() => api.post('/api/integrations/sheet', { mode: 'google', url: sheetInput.value }), 'Sheet connected'); await refreshBootstrap(); if (r) ctx.reload(); else e.currentTarget.disabled = false; } }, 'Connect')),
     !info.connected && h('div', { class: 'dim mt-8', style: 'font-size:12px' }, 'Sign in with Google first to connect a sheet.'),
@@ -88,10 +85,10 @@ export default async function render(ctx) {
     try {
       const p = await api.post('/api/integrations/sheet/preview');
       box.replaceChildren(...[
-        h('div', { class: 'row wrap gap-16 mb-16' }, ...[['Rows read', p.records], ['Flagged (missing info)', p.flagged], ['Skipped / issues', p.issues.length], ['Tabs', p.columns.length]].map(([l, v]) => h('div', h('div', { class: 'eyebrow' }, l), h('div', { style: 'font-size:20px;font-weight:650;margin-top:6px' }, v)))),
+        h('div', { class: 'row wrap gap-16 mb-16' }, ...[['Asks imported', p.records], [`Videos & GIFs to make`, p.deliverables], [`Ignored (no ${(p.assetCodes || []).join('/')})`, (p.skipped?.filtered || 0) + (p.skipped?.noAsset || 0)], ['Flagged (missing info)', p.flagged]].map(([l, v]) => h('div', h('div', { class: 'eyebrow' }, l), h('div', { style: 'font-size:20px;font-weight:650;margin-top:6px' }, v)))),
         ...p.columns.slice(0, 1).map((c) => h('div', { class: 'map-grid' }, Object.entries(c.mapping).map(([hd, f]) => h('div', { class: `map-chip ${f ? 'ok' : ''}` }, h('span', { class: 'mono' }, hd), icon('arrow', 11), f ? h('b', FIELD_NAMES[f]) : h('span', { class: 'dim' }, 'tracked as extra column'))))),
         p.issues.length ? h('div', { class: 'callout warn mt-12' }, icon('alert', 15), h('div', p.issues.slice(0, 3).map((i) => h('div', i.message)))) : null,
-        h('div', { class: 'dim mt-12', style: 'font-size:12px' }, 'Project identity: a “Project ID” column is used when present; otherwise projects are matched on month + name, with rename detection by tab and row so edits never create duplicates.')].filter(Boolean));
+        h('div', { class: 'dim mt-12', style: 'font-size:12px' }, `Asset filter: only rows with ${(p.assetCodes || []).join(' or ')} in the asset column are imported (change in Automation Settings). Owner column = existing assignment (several names: the first is primary, the rest are co-owners). Deadline = Revised date when set, else Live date. `, 'Project identity: a “Project ID” column is used when present; otherwise projects are matched on month + name, with rename detection by tab and row so edits never create duplicates.')].filter(Boolean));
     } catch (e) { box.replaceChildren(h('div', { class: 'callout err' }, icon('alert', 15), e.message)); }
   }
 
@@ -113,14 +110,14 @@ export default async function render(ctx) {
         (tab?.rows || []).map((r) => {
           const tr = h('tr', { dataset: { row: r.rowNumber }, class: ctx.query.row && simTab === ctx.query.tab && +ctx.query.row === r.rowNumber ? 'flash' : '' },
             h('td', { class: 'rn' }, r.rowNumber, h('button', { class: 'rm', 'aria-label': 'Delete row', onClick: async () => { if (await confirmDialog({ title: 'Delete this row?', message: `Row ${r.rowNumber} will be removed from the sheet. The project stays in the dashboard, flagged as “removed from sheet”.`, confirmLabel: 'Delete row', danger: true })) { await api.del(`/api/demo/sheet/row?tab=${encodeURIComponent(tab.name)}&row=${r.rowNumber}`); await loadSim(); autoSync(); } } }, icon('x', 11))),
-            headers.map((hd) => { const val = r.values[hd] ?? ''; const td = h('td', { contentEditable: 'true', spellcheck: false, dataset: { h: hd, k: hd.replace(/\W+/g, '') }, class: hd === 'Project Name' ? 'w-name' : hd === 'Brief' ? 'w-brief' : hd === 'Reference Links' ? 'w-links' : '' }, val);
+            headers.map((hd) => { const val = r.values[hd] ?? ''; const td = h('td', { contentEditable: 'true', spellcheck: false, dataset: { h: hd, k: hd.replace(/\W+/g, '') }, class: hd === sim.fieldHeaders.name ? 'w-name' : /brief:/.test(Object.entries(sim.fieldHeaders).find(([, v]) => v === hd)?.[0] || '') || hd === sim.fieldHeaders.brief ? 'w-brief' : hd === sim.fieldHeaders.links ? 'w-links' : '' }, val);
               td.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); td.blur(); } if (e.key === 'Escape') { td.textContent = val; td.blur(); } });
               td.addEventListener('blur', async () => { const nv = td.textContent.trim(); if (nv === String(val).trim()) return; r.values[hd] = nv; const res = await act(() => api.patch('/api/demo/sheet/cell', { tab: tab.name, row: r.rowNumber, header: hd, value: nv })); if (res) { td.classList.add('edited'); toast('Cell saved to sheet', { type: 'info', sub: res.autosync ? 'Monitor will detect it in a moment…' : 'Click “Sync now” to detect' }); if (res.autosync) autoSync(); } });
               return td; }));
           return tr; })));
     simBox.replaceChildren(
       h('div', { class: 'a-head' }, h('div', { class: 'a-ico' }, icon('sheet', 18)), h('div', { class: 'grow' }, h('h3', 'Sheet simulator'), h('div', { class: 'dim', style: 'font-size:12.5px' }, 'A stand-in for your Google Sheet. Click any cell to edit — press Enter to save. Edits are picked up by the monitor exactly like real sheet edits.')),
-        h('div', { class: 'row gap-8' }, h('button', { class: 'btn sm', onClick: async () => { const t = simTab; const n = tab?.rows.length || 0; await api.post('/api/demo/sheet/row', { tab: t, data: { Month: tab?.rows[0]?.values.Month || '', 'Project Name': `New brief ${n + 1}`, Priority: 'Medium' } }); await loadSim(); toast('Row added', { type: 'info', sub: 'Fill in the details, then sync' }); } }, icon('plus', 13), 'Add row'),
+        h('div', { class: 'row gap-8' }, h('button', { class: 'btn sm', onClick: async () => { const t = simTab; const n = tab?.rows.length || 0; await api.post('/api/demo/sheet/row', { tab: t, data: { [sim.fieldHeaders.name]: `New ask ${n + 1}`, [sim.fieldHeaders.assets]: '1V' } }); await loadSim(); toast('Row added', { type: 'info', sub: 'Fill in the details, then sync' }); } }, icon('plus', 13), 'Add row'),
           h('button', { class: 'btn sm primary', onClick: async (e) => { const b = e.currentTarget; b.disabled = true; toastSync(await syncNow('manual')); await refreshBootstrap(); await loadSim(); b.disabled = false; } }, icon('refresh', 13), 'Sync now'))),
       h('div', { class: 'sheet-wrap' }, table),
       h('div', { class: 'sheet-tabs' }, sim.tabs.map((t) => h('button', { class: t.name === simTab ? 'on' : '', onClick: () => { simTab = t.name; drawSim(); } }, t.name, h('span', { class: 'dim' }, ` ${t.rows.length}`))), h('span', { class: 'end dim', style: 'font-size:11.5px;padding:0 10px' }, 'Tip: a new tab named e.g. “Jan 2027” becomes a new month workspace')));

@@ -32,19 +32,20 @@ export function dashboard() {
   const statusMap = Object.fromEntries(by('status').map((r) => [r.k, r.n]));
   const prioMap = Object.fromEntries(by('priority').map((r) => [r.k, r.n]));
   const months = all(`SELECT month k, COUNT(*) n, SUM(status='Completed') done FROM projects WHERE ${base} GROUP BY month ORDER BY month`).map((r) => ({ key: r.k, label: monthLabel(r.k), total: r.n, completed: r.done || 0 }));
-  const members = allMembers().filter((m) => !m.is_owner);
+  const all_ = allMembers();
+  const members = all_.filter((m) => !m.is_owner || m.enabled); // the PM counts as a teammate when they take projects too
   const loads = memberLoads();
   const team = members.map((m) => {
     const rows = all(`SELECT status, COUNT(*) n FROM projects WHERE ${base} AND assignee_id=? GROUP BY status`, m.id);
     const st = Object.fromEntries(rows.map((r) => [r.status, r.n]));
-    return { id: m.id, name: m.name, color: m.color, active: loads[m.id]?.count || 0, completed: st['Completed'] || 0, byStatus: st, available: m.enabled && m.availability !== 'unavailable' && !(m.leave_until && m.leave_until >= t) };
+    return { id: m.id, name: m.name, color: m.color, active: loads[m.id]?.count || 0, deliverables: loads[m.id]?.deliverables || 0, completed: st['Completed'] || 0, byStatus: st, available: m.enabled && m.availability !== 'unavailable' && !(m.leave_until && m.leave_until >= t) };
   });
-  const me = allMembers().find((x) => x.is_owner);
+  const me = all_.find((x) => x.is_owner && !x.enabled);
   if (me) {
     const l = loads[me.id]?.count || 0;
     if (l) {
       const st = Object.fromEntries(all(`SELECT status, COUNT(*) n FROM projects WHERE ${base} AND assignee_id=? GROUP BY status`, me.id).map((r) => [r.status, r.n]));
-      team.push({ id: me.id, name: `${me.name} (you)`, color: me.color, active: l, completed: st['Completed'] || 0, byStatus: st, available: true, owner: true });
+      team.push({ id: me.id, name: `${me.name} (you)`, color: me.color, active: l, deliverables: loads[me.id]?.deliverables || 0, completed: st['Completed'] || 0, byStatus: st, available: true, owner: true });
     }
   }
   const upcoming = all(`SELECT p.id, p.code, p.name, p.deadline, p.priority, p.status, p.assignee_id, m.name assignee FROM projects p LEFT JOIN team_members m ON m.id=p.assignee_id
@@ -65,7 +66,7 @@ export function dashboard() {
     byPriority: PRIORITIES.map((p) => ({ key: p, n: prioMap[p] || 0 })),
     byMonth: months,
     byTeammate: team,
-    balance: balanceScore(team.filter((x) => x.available && !x.owner).map((x) => x.active)),
+    balance: balanceScore(team.filter((x) => x.available && !x.owner).map((x) => (getSettings().assign.weight_mode === 'deliverables' ? x.deliverables : x.active))),
     upcoming,
     impact: { minutesSaved, autoAssigned, manualAssigned, autoRate: autoAssigned + manualAssigned ? Math.round((autoAssigned / (autoAssigned + manualAssigned)) * 100) : 100, emailsSent, changesCaught, syncRuns: runs.n || 0, imported },
     lastRun,

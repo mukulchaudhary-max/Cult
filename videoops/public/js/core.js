@@ -167,10 +167,12 @@ export const linkEl = (href, children, cls = '') => h('a', { href, class: cls },
 export function sheetLinkBtn(p, cls = 'btn sm') { return h('a', { class: cls, href: p.sheet_link, target: p.sheet_link.startsWith('http') && !p.sheet_link.includes('localhost') ? '_blank' : undefined, rel: 'noopener' }, icon('sheet', 14), 'Open in Sheet', icon('ext', 12)); }
 
 // ───────────────────────── Tooltips: any element with data-tip="…" gets one
+// tooltips may contain a few formatting tags; everything else (e.g. text that came from a sheet) is escaped
+const safeTip = (s) => esc(s).replace(/&lt;(\/?)(b|span)(?: class=&quot;m&quot;)?&gt;/g, (m, c, t) => `<${c}${t}${!c && t === 'span' && m.includes('class') ? ' class="m"' : ''}>`).replace(/&lt;br&gt;/g, '<br>');
 let tipEl;
 document.addEventListener('mouseover', (e) => {
   const t = e.target.closest?.('[data-tip]'); if (!t) return;
-  tipEl?.remove(); tipEl = h('div', { class: 'tip', html: t.dataset.tip }); document.body.append(tipEl);
+  tipEl?.remove(); tipEl = h('div', { class: 'tip', html: safeTip(t.dataset.tip) }); document.body.append(tipEl);
   const r = t.getBoundingClientRect(), tr = tipEl.getBoundingClientRect();
   tipEl.style.left = `${Math.max(8, Math.min(innerWidth - tr.width - 8, r.left + r.width / 2 - tr.width / 2))}px`;
   tipEl.style.top = `${r.top - tr.height - 8 < 8 ? r.bottom + 8 : r.top - tr.height - 8}px`;

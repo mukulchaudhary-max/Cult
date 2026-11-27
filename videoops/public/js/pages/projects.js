@@ -6,8 +6,17 @@ export default async function render(ctx) {
 }
 
 /* ═════════════════════════════ TABLE ═════════════════════════════ */
+/** "2V · 1G" chips for what this team has to make, plus the statics/carousels it does not (dim). */
+export function assetChips(p) {
+  const c = p.assets_counts; if (!c) return h('span', { class: 'dim' }, '—');
+  const mine = [['V', 'video', 'var(--teal)'], ['G', 'GIF', 'var(--violet)']].filter(([k]) => c[k]);
+  const other = ['S', 'C'].filter((k) => c[k]).map((k) => `${c[k]}${k}`).join(' ');
+  return h('div', { class: 'row gap-6', dataset: { tip: `<b>${p.assets || ''}</b><br><span class="m">S static · V video · C carousel · G GIF</span>` } },
+    ...mine.map(([k, l, col]) => h('span', { class: 'tag c', style: { '--c': col } }, `${c[k]} ${l}${c[k] > 1 && k === 'V' ? 's' : ''}`.replace('GIF', c[k] > 1 ? 'GIFs' : 'GIF'))),
+    other ? h('span', { class: 'dim mono', style: 'font-size:11px' }, other) : null);
+}
 const COLS = [
-  ['name', 'Project'], ['month', 'Month'], ['brand', 'Brand / Campaign'], ['type', 'Type'], ['assignee', 'Assigned To'], ['priority', 'Priority'],
+  ['name', 'Project'], ['month', 'Month'], ['brand', 'Brand / Campaign'], ['type', 'Type'], ['assets', 'Video / GIF'], ['assignee', 'Assigned To'], ['priority', 'Priority'],
   ['status', 'Status'], ['received', 'Brief Received'], ['deadline', 'Deadline'], ['updated', 'Last Updated'], ['assignment', 'Assignment'],
 ];
 const DEFAULTS = { q: '', month: '', assignee: '', status: '', priority: '', type: '', mode: '', due: '', flagged: '', sort: 'deadline', dir: 'asc', page: 1, pageSize: 25 };
@@ -67,7 +76,8 @@ async function renderTable(ctx) {
       h('td', { class: 'muted nowrap' }, fmt.monthShort(p.month)),
       h('td', h('div', { class: 'trunc', style: 'max-width:150px' }, p.brand || h('span', { class: 'dim' }, '—'))),
       h('td', h('div', { class: 'trunc', style: 'max-width:150px' }, p.type || h('span', { class: 'tag c', style: { '--c': 'var(--amber)' } }, 'Missing'))),
-      h('td', h('button', { class: 'pj-cell-btn', dataset: { act: 'assignee' } }, assigneeChip(p))),
+      h('td', { class: 'nowrap' }, assetChips(p)),
+      h('td', h('button', { class: 'pj-cell-btn', dataset: { act: 'assignee' } }, assigneeChip(p), p.collaborator_names?.length ? h('span', { class: 'tag', dataset: { tip: `<b>Also on this</b><br>${p.collaborator_names.join('<br>')}` }, style: 'margin-left:6px' }, `+${p.collaborator_names.length}`) : null)),
       h('td', h('button', { class: 'pj-cell-btn', dataset: { act: 'priority' } }, priorityTag(p.priority))),
       h('td', h('span', { dataset: { act: 'status' } }, statusPill(p.status, { onClick: () => {} }))),
       h('td', { class: 'muted num nowrap' }, fmt.date(p.brief_received_at)),
@@ -226,10 +236,12 @@ async function renderDetail(ctx, id) {
     const details = h('div', { class: 'card' }, h('div', { class: 'card-h' }, h('h3', 'Details')),
       h('div', { class: 'card-b' }, h('dl', { class: 'pd-dl side' },
         h('dt', 'Assigned to'), h('dd', h('button', { class: 'pj-cell-btn', onClick: (e) => pickAssignee(e.currentTarget, p, async () => { await fetchData(); paint(); }) }, assigneeChip(p)), h('div', { class: 'row gap-6', style: 'margin-top:6px' }, p.assignee_id || p.assign_mode === 'locked' ? modeTag(p.assign_mode, p.assignment_status) : h('span', { class: 'tag c', style: { '--c': 'var(--amber)' } }, 'Unassigned')), p.auto_reason && p.assign_mode === 'auto' ? h('div', { class: 'dim', style: 'font-size:11.5px;margin-top:6px;line-height:1.4' }, p.auto_reason) : null),
+        p.collaborator_names?.length ? [h('dt', 'Also on this'), h('dd', h('span', { class: 'muted' }, p.collaborator_names.join(', ')))] : null,
         h('dt', 'Priority'), h('dd', h('button', { class: 'pj-cell-btn', onClick: (e) => menu(e.currentTarget, state.priorities.map((x) => ({ label: x, dot: PRIO_COLORS[x], checked: x === p.priority, onClick: () => x !== p.priority && patch({ priority: x }, `Priority → ${x}`) }))) }, priorityTag(p.priority), icon('down', 11))),
         h('dt', 'Deadline'), h('dd', dueIn),
         h('dt', 'Project type'), h('dd', typeSel),
-        h('dt', 'Duration'), h('dd', fmt.dur(p.duration_sec)),
+        h('dt', 'Video / GIF'), h('dd', assetChips(p)),
+        p.duration_sec ? [h('dt', 'Duration'), h('dd', fmt.dur(p.duration_sec))] : null,
         h('dt', 'Brand'), h('dd', p.brand || '—'),
         h('dt', 'Month'), h('dd', h('a', { class: 'pd-a', href: `#/projects?month=${p.month}` }, p.month_label)),
         h('dt', 'Received'), h('dd', fmt.timeLong(p.brief_received_at)),

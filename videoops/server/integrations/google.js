@@ -77,23 +77,31 @@ export function parseSpreadsheetId(input) {
   if (m) return m[1];
   return /^[a-zA-Z0-9_-]{20,}$/.test(s) ? s : null;
 }
+/** Pure: one tab of Sheets "grid data" -> {name,gid,headers,rows}. Hidden hyperlinks ("Product URLs" -> https://…) are appended to the cell text. */
+export function gridToTab(props, rowData = []) {
+  const grid = rowData.map((r) => (r.values || []).map((c) => {
+    const text = c?.formattedValue ?? '';
+    const urls = new Set();
+    if (c?.hyperlink) urls.add(c.hyperlink);
+    for (const run of c?.textFormatRuns || []) if (run.format?.link?.uri) urls.add(run.format.link.uri);
+    const missing = [...urls].filter((u) => !text.includes(u));
+    return missing.length ? [text, ...missing].filter(Boolean).join(' ') : text;
+  }));
+  // header row = first row with at least 2 non-empty cells
+  const hi = grid.findIndex((r) => r.filter((c) => String(c).trim()).length >= 2);
+  if (hi < 0) return { name: props.title, gid: String(props.sheetId), headers: [], rows: [] };
+  const headers = grid[hi].map((h, j) => String(h || '').trim() || `Column ${j + 1}`);
+  // a trailing run of blank header cells (sheet formatted wider than its data) is not a column
+  while (headers.length && /^Column \d+$/.test(headers.at(-1))) headers.pop();
+  return {
+    name: props.title, gid: String(props.sheetId), headers,
+    rows: grid.slice(hi + 1).map((r, k) => ({ rowNumber: hi + k + 2, values: Object.fromEntries(headers.map((h, j) => [h, r[j] ?? ''])) })),
+  };
+}
 export async function fetchSheetSnapshot(spreadsheetId) {
-  const meta = await api(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=properties.title,sheets.properties(sheetId,title,gridProperties)`);
-  const tabs = meta.sheets.map((s) => s.properties);
-  const ranges = tabs.map((t) => `ranges=${encodeURIComponent(`'${t.title.replace(/'/g, "''")}'`)}`).join('&');
-  const vals = await api(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${ranges}&majorDimension=ROWS&valueRenderOption=FORMATTED_VALUE`);
-  const out = tabs.map((t, i) => {
-    const rows = vals.valueRanges?.[i]?.values || [];
-    // header row = first row with at least 2 non-empty cells
-    const hi = rows.findIndex((r) => r.filter((c) => String(c).trim()).length >= 2);
-    if (hi < 0) return { name: t.title, gid: String(t.sheetId), headers: [], rows: [] };
-    const headers = rows[hi].map((h, j) => String(h || '').trim() || `Column ${j + 1}`);
-    return {
-      name: t.title, gid: String(t.sheetId), headers,
-      rows: rows.slice(hi + 1).map((r, k) => ({ rowNumber: hi + k + 2, values: Object.fromEntries(headers.map((h, j) => [h, r[j] ?? ''])) })),
-    };
-  });
-  return { title: meta.properties.title, spreadsheetId, tabs: out };
+  const fields = 'properties.title,sheets(properties(sheetId,title),data(rowData(values(formattedValue,hyperlink,textFormatRuns(format(link(uri)))))))';
+  const j = await api(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?includeGridData=true&fields=${encodeURIComponent(fields)}`);
+  return { title: j.properties.title, spreadsheetId, tabs: j.sheets.map((s) => gridToTab(s.properties, s.data?.[0]?.rowData || [])) };
 }
 
 // ---- Gmail ---------------------------------------------------------------------------------

@@ -24,7 +24,7 @@
 ## The sync pipeline (`engine/sync.js`)
 
 1. **Fetch** a snapshot of every tab from the active provider (demo sheet or Google). A content hash of the snapshot short-circuits unchanged sheets.
-2. **Parse** (`mapper.js`): header aliases → fields; dates (ISO, DD/MM/YYYY, "Dec 8", Sheets serials), durations, priorities, statuses; month from column → tab → deadline; unknown columns kept as extras; **missing-info flags** (no deadline, missing/unclear brief, no links, no type).
+2. **Parse** (`mapper.js`): header aliases → fields (incl. typo-tolerant `Asset Requierment`, composite brief from Angle/Concept/Messaging/Imagery); **asset filter** (`S/V/C/G` codes with counts; only the configured codes are imported, the rest counted as skipped); Live vs Revised dates; dates (ISO, DD/MM/YYYY, "Dec 8", Sheets serials), durations, priorities, statuses; month from column → tab → deadline; unknown columns kept as extras; **missing-info flags** (no deadline, missing/unclear brief, no links, no type).
 3. **Reconcile** — never duplicates:
    - match by explicit `Project ID`, else by fingerprint `month|name`;
    - **rename detection**: an unmatched row at the same tab + row as a project whose old name vanished updates that project;

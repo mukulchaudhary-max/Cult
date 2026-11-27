@@ -16,7 +16,7 @@ import { runSync, syncInProgress, resolveMember } from './engine/sync.js';
 import { runReminders } from './services/reminders.js';
 import * as G from './integrations/google.js';
 import * as S from './integrations/sheetSource.js';
-import { parseSnapshot } from './engine/mapper.js';
+import { parseSnapshot, parseAssets, mapHeaders } from './engine/mapper.js';
 import { resetWorkspace } from './seed.js';
 import { bus } from './bus.js';
 
@@ -25,11 +25,13 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 const bad = (msg, code = 400) => Object.assign(new Error(msg), { status: code });
 
 function decorate(p, memberMap, t = today()) {
+  const memberMap0 = memberMap;
   const m = p.assignee_id ? memberMap[p.assignee_id] : null;
   return {
     ...p, assignee_name: m?.name || null, assignee_color: m?.color || null, is_owner_assigned: !!m?.is_owner,
     assignment_status: p.assignee_id ? ASSIGN_MODE_LABEL[p.assign_mode] : p.assign_mode === 'locked' ? ASSIGN_MODE_LABEL.locked : 'Unassigned',
-    month_label: monthLabel(p.month), sheet_link: S.sheetLink(p),
+    month_label: monthLabel(p.month), sheet_link: S.sheetLink(p), assets_counts: parseAssets(p.assets),
+    collaborator_names: (p.collaborators || []).map((id) => memberMap0[id]?.name).filter(Boolean),
     days_to_deadline: p.deadline ? daysBetween(t, p.deadline) : null,
     overdue: !!(p.deadline && p.deadline < t && !['Completed', 'On Hold'].includes(p.status)),
   };
@@ -125,7 +127,7 @@ export function createApp() {
   const SORTS = {
     name: 'p.name COLLATE NOCASE', month: 'p.month', brand: 'p.brand COLLATE NOCASE', type: 'p.type COLLATE NOCASE', assignee: 'm.name COLLATE NOCASE',
     priority: `CASE p.priority WHEN 'Urgent' THEN 4 WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 ELSE 1 END`, status: `CASE p.status ${STATUSES.map((s, i) => `WHEN '${s}' THEN ${i}`).join(' ')} END`,
-    received: 'p.brief_received_at', deadline: `p.status='Completed', p.deadline IS NULL, p.deadline`, updated: 'p.updated_at', code: 'p.id', assignment: 'p.assign_mode',
+    received: 'p.brief_received_at', deadline: `p.status='Completed', p.deadline IS NULL, p.deadline`, updated: 'p.updated_at', code: 'p.id', assignment: 'p.assign_mode', assets: 'p.deliverables',
   };
   app.get('/api/projects', (req, res) => {
     const q = req.query, w = ['p.removed_from_sheet=0'], a = [];
@@ -220,7 +222,7 @@ export function createApp() {
       const done = get(`SELECT COUNT(*) n FROM projects WHERE assignee_id=? AND status='Completed'`, m.id).n;
       const overdue = projects.filter((p) => p.deadline && p.deadline < t && p.status !== 'On Hold').length;
       const onLeave = !!(m.leave_until && m.leave_until >= t);
-      return { ...m, active: loads[m.id]?.count || 0, weighted: loads[m.id]?.weighted || 0, completed: done, overdue, onLeave, projects, available: m.enabled && m.availability !== 'unavailable' && !onLeave };
+      return { ...m, active: loads[m.id]?.count || 0, deliverables: loads[m.id]?.deliverables || 0, weighted: loads[m.id]?.weighted || 0, completed: done, overdue, onLeave, projects, available: m.enabled && m.availability !== 'unavailable' && !onLeave };
     });
   };
   app.get('/api/team', (req, res) => res.json(teamView()));
@@ -252,7 +254,8 @@ export function createApp() {
     if (!cur) throw bad('Teammate not found', 404);
     const merged = { ...cur, ...req.body, prefs: { ...cur.prefs, ...(req.body.prefs || {}) } };
     const m = memberBody(merged);
-    if (cur.is_owner) { m.enabled = false; }
+    if (cur.is_owner && req.body.enabled === undefined) m.enabled = cur.enabled;
+    if (cur.is_owner) { m.email = cur.email; }
     if (!m.name) throw bad('Name is required');
     update('team_members', id, m);
     log('team_updated', `Teammate updated: ${m.name}`, { actor: 'you' });
@@ -350,6 +353,12 @@ export function createApp() {
     const patch = req.body || {};
     if (patch.integrations || (patch.email && patch.email.mode)) throw bad('Use the Integrations page to change connections');
     if (patch.assign?.strategy && !['balance_total', 'equal_batch'].includes(patch.assign.strategy)) throw bad('Invalid strategy');
+    if (patch.assets?.import_codes !== undefined) {
+      const codes = [...new Set((Array.isArray(patch.assets.import_codes) ? patch.assets.import_codes : []).map((c) => String(c).toUpperCase()))];
+      if (!codes.length || codes.some((c) => !['S', 'V', 'C', 'G'].includes(c))) throw bad('Pick at least one asset type (S, V, C or G)');
+      patch.assets.import_codes = codes;
+    }
+    if (patch.assign?.weight_mode && !['deliverables', 'projects'].includes(patch.assign.weight_mode)) throw bad('Invalid workload unit');
     if (patch.monitor?.interval_min !== undefined) patch.monitor.interval_min = Math.max(1, Math.min(1440, +patch.monitor.interval_min || 5));
     res.json(saveSettings(patch));
   }));
@@ -379,8 +388,8 @@ export function createApp() {
   }));
   app.post('/api/integrations/sheet/preview', wrap(async (req, res) => {
     const snap = await S.fetchSnapshot();
-    const parsed = parseSnapshot(snap);
-    res.json({ title: snap.title, columns: parsed.columns, records: parsed.records.length, issues: parsed.issues, flagged: parsed.records.filter((r) => r.flags.length).length, sample: parsed.records.slice(0, 3).map((r) => ({ name: r.name, month: r.month, deadline: r.deadline, priority: r.priority, flags: r.flags })) });
+    const parsed = parseSnapshot(snap, { assetCodes: getSettings().assets.import_codes });
+    res.json({ title: snap.title, columns: parsed.columns, records: parsed.records.length, skipped: { filtered: parsed.skipped.filtered, noAsset: parsed.skipped.noAsset, sample: parsed.skipped.rows.slice(0, 5) }, assetCodes: getSettings().assets.import_codes, deliverables: parsed.records.reduce((a, r) => a + (r.deliverables || 0), 0), issues: parsed.issues, flagged: parsed.records.filter((r) => r.flags.length).length, sample: parsed.records.slice(0, 3).map((r) => ({ name: r.name, month: r.month, deadline: r.deadline, priority: r.priority, flags: r.flags })) });
   }));
   app.post('/api/integrations/email', wrap(async (req, res) => {
     const mode = req.body?.mode;
@@ -402,7 +411,13 @@ export function createApp() {
 
   // ---------------------------------------------------------------- demo sheet simulator
   const demoOnly = (req, res, next) => (getSettings().integrations.sheet_mode === 'demo' ? next() : res.status(400).json({ error: 'The sheet simulator is only available in demo mode' }));
-  app.get('/api/demo/sheet', demoOnly, (req, res) => res.json({ ...S.demoSnapshot(), headers: S.DEMO_HEADERS }));
+  app.get('/api/demo/sheet', demoOnly, (req, res) => {
+    const snap = S.demoSnapshot();
+    const headers = snap.tabs[0]?.headers || S.demoHeaders();
+    const fieldHeaders = {};
+    for (const [h, f] of Object.entries(mapHeaders(headers))) if (f && !fieldHeaders[f]) fieldHeaders[f] = h;
+    res.json({ ...snap, headers, fieldHeaders });
+  });
   app.patch('/api/demo/sheet/cell', demoOnly, wrap(async (req, res) => {
     const { tab, row, header, value } = req.body || {};
     S.demoSetCell(tab, +row, header, String(value ?? ''));

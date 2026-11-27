@@ -20,7 +20,7 @@ Thanks,
 {{owner_name}}`;
 const DEFAULT_SUBJECT = 'New Video Project Assigned – {{project_name}}';
 const VARS = ['teammate_name', 'project_name', 'project_code', 'project_type', 'brand', 'deadline', 'priority', 'brief', 'reference_links', 'sheet_link', 'dashboard_link', 'duration', 'month', 'owner_name'];
-const FIELD_LABELS = { name: 'Project name', brand: 'Brand / campaign', type: 'Project type', brief: 'Brief / requirement', duration: 'Video duration', deadline: 'Delivery date', priority: 'Priority', status: 'Project status', assignee: 'Assigned to', links: 'Reference links', product: 'Product information', month: 'Month', extra: 'Any other column' };
+const FIELD_LABELS = { name: 'Project name', brand: 'Brand / campaign', type: 'Project type', brief: 'Brief / requirement', assets: 'Asset requirement (S/V/C/G)', duration: 'Video duration', deadline: 'Delivery date', priority: 'Priority', status: 'Project status', assignee: 'Assigned to', links: 'Reference links', product: 'Product information', month: 'Month', extra: 'Any other column' };
 
 export default async function render(ctx) {
   const { root } = ctx;
@@ -56,12 +56,25 @@ export default async function render(ctx) {
     state.mode.sheet === 'demo' && row('Instant sync after simulator edits', 'Demo only: when you edit the sheet simulator, sync right away so detection is visible live.', tg('monitor.autosync_on_sheet_edit')),
   ], { get: () => S.monitor.enabled, set: (v) => set('monitor.enabled', v) });
 
+  // ── asset filter (S/V/C/G)
+  const ASSETS = [['S', 'Static', 'Image / banner creatives'], ['V', 'Video', 'Edited video'], ['C', 'Carousel', 'Multi-card carousels'], ['G', 'GIF', 'Animated GIFs']];
+  const codes = new Set(S.assets?.import_codes || ['V', 'G']);
+  const assetGrid = h('div', { class: 'fields-grid', style: 'border-bottom:0' }, ASSETS.map(([k, l, d]) => h('label', { class: 'fchip' }, toggle({ checked: codes.has(k), label: l, onChange: async (v, e) => {
+    if (v) codes.add(k); else codes.delete(k);
+    if (!codes.size) { codes.add(k); e.target.checked = true; toast('Keep at least one asset type', { type: 'err' }); return; }
+    await save({ assets: { import_codes: [...codes] } }); toast('Asset filter updated', { type: 'ok', sub: 'Applied on the next sync — click “Sync now” to see it' });
+  } }), h('div', h('div', { style: 'font-weight:600' }, `${k} · ${l}`), h('div', { class: 'dim', style: 'font-size:11.5px' }, d)))));
+  const secAssets = section('assets', 'film', 'Asset filter — what this team makes', 'The sheet’s Asset Requirement column uses codes like “2S, 1V, 1C, 1G”. Only rows containing a selected type are imported; the number next to each code is how many items are needed.', [
+    h('div', { class: 'a-row stack' }, h('div', h('div', { class: 'a-label' }, 'Import rows that include'), h('div', { class: 'a-desc' }, 'S = static · V = video · C = carousel · G = GIF. Default for the video team: V and G. A “6S, 2V, 2C” row is imported and counts as 2 videos of work; a “4S, 2C” row is ignored.')), assetGrid),
+  ]);
+
   // ── assignment
   const stratDesc = h('div', { class: 'a-desc' });
   const drawStrat = () => { stratDesc.textContent = S.assign.strategy === 'equal_batch' ? 'Every available teammate receives the same number of projects from each incoming batch (extras go to the lowest workload).' : 'Each project goes to whoever currently has the lowest total workload, so the whole team ends up balanced — existing projects included.'; };
   drawStrat();
   const secAssign = section('assign', 'shuffle', 'Automatic team assignment', 'Distribute unassigned projects fairly among available teammates — never blocked by missing information.', [
     h('div', { class: 'a-row stack' }, h('div', h('div', { class: 'a-label' }, 'Distribution rule'), stratDesc), segmented([['balance_total', 'Balance total workload'], ['equal_batch', 'Equal share of each batch']], S.assign.strategy, (v) => { S.assign.strategy = v; drawStrat(); set('assign.strategy', v); })),
+    row('Balance workload by', 'Videos & GIFs: someone with a 3-video ask carries more than someone with a 1-video ask. Projects: every project counts the same.', select([['deliverables', 'Videos & GIFs to make'], ['projects', 'Number of projects']], S.assign.weight_mode, (v) => set('assign.weight_mode', v), 'sm')),
     row('Weight workload by priority', 'Urgent / High projects count more than Low ones when comparing workloads.', tg('assign.weight_by_priority')),
     row('Preference flexibility', 'Prefer teammates whose preferred types/brands match, if their workload is within this many projects of the lowest.', select([[0, 'Tie-break only (strict balance)'], [1, 'Within 1 project'], [2, 'Within 2 projects']], S.assign.preference_tolerance, (v) => set('assign.preference_tolerance', +v), 'sm')),
     row('Skip unavailable teammates', 'Never auto-assign to anyone marked unavailable or on leave.', tg('assign.skip_unavailable')),
@@ -130,7 +143,7 @@ export default async function render(ctx) {
     row('Group emails above', 'If more than this many projects change in one sync, send a single digest email instead of one per project.', h('input', { class: 'input sm', style: 'width:70px', type: 'number', min: 1, max: 50, value: S.change_detection.email_digest_threshold, onChange: (e) => set('change_detection.email_digest_threshold', Math.max(1, +e.target.value || 5)) })),
   ]);
 
-  const sections = [['monitor', 'Sheet monitoring', secMonitor], ['assign', 'Team assignment', secAssign], ['availability', 'Availability', secAvail], ['overrides', 'Manual override', secOver], ['email', 'Gmail & templates', secEmail], ['notify', 'Notifications', secNotify], ['reminders', 'Deadline reminders', secRem], ['detection', 'Change detection', secDetect]];
+  const sections = [['monitor', 'Sheet monitoring', secMonitor], ['assets', 'Asset filter (S/V/C/G)', secAssets], ['assign', 'Team assignment', secAssign], ['availability', 'Availability', secAvail], ['overrides', 'Manual override', secOver], ['email', 'Gmail & templates', secEmail], ['notify', 'Notifications', secNotify], ['reminders', 'Deadline reminders', secRem], ['detection', 'Change detection', secDetect]];
   const nav = h('nav', { class: 'a-nav card' }, h('div', { class: 'eyebrow', style: 'padding:4px 10px 8px' }, 'Automations'), sections.map(([id, l]) => h('a', { href: `#/automation?section=${id}`, onClick: (e) => { e.preventDefault(); document.getElementById(`sec-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, l)));
   root.append(h('div', { class: 'page-h' }, h('div', h('h1', 'Automation Settings'), h('div', { class: 'sub' }, 'Every automation can be switched on or off on its own — changing one never affects the others. Changes save instantly.')), h('div', { class: 'actions' }, savedEl)),
     h('div', { class: 'a-layout' }, nav, h('div', { class: 'col gap-16', style: 'min-width:0' }, sections.map((s) => s[2]))));

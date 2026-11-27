@@ -21,12 +21,13 @@ const FIELDS = [
   { key: 'priority', cfg: 'priority', label: 'Priority', col: 'priority' },
   { key: 'month', cfg: 'month', label: 'Month', col: 'month', show: (v) => (v ? monthLabel(v) : '') },
   { key: 'product', cfg: 'product', label: 'Product information', col: 'product_info' },
+  { key: 'assets', cfg: 'assets', label: 'Asset requirement', col: 'assets' },
   { key: 'links', cfg: 'links', label: 'Reference links', col: 'links', show: (v) => (v || []).join(', '), json: true },
   { key: 'status', cfg: 'status', label: 'Project status', col: 'status', special: true },
   { key: 'assignee', cfg: 'assignee', label: 'Assigned to', col: 'assignee_raw', special: true },
 ];
 
-const snapOf = (rec) => ({ name: rec.name, brand: rec.brand, type: rec.type, brief: rec.brief, duration: rec.duration, deadline: rec.deadline, priority: rec.priority, month: rec.month, product: rec.product, links: rec.links, status: rec.status, assignee: rec.assignee_raw, extra: rec.extra });
+const snapOf = (rec) => ({ assets: rec.assets || '', name: rec.name, brand: rec.brand, type: rec.type, brief: rec.brief, duration: rec.duration, deadline: rec.deadline, priority: rec.priority, month: rec.month, product: rec.product, links: rec.links, status: rec.status, assignee: rec.assignee_raw, extra: rec.extra });
 
 const normVal = (v, ws) => {
   if (Array.isArray(v)) return v.join(' ');
@@ -35,14 +36,49 @@ const normVal = (v, ws) => {
   return ws ? s.replace(/\s+/g, ' ').trim() : s.trim();
 };
 
-export function resolveMember(raw, members) {
-  const q = String(raw || '').trim().toLowerCase();
-  if (!q) return null;
-  const pool = members;
-  return pool.find((m) => m.name.toLowerCase() === q || m.email.toLowerCase() === q)
-    || (() => { const f = pool.filter((m) => m.name.toLowerCase().split(/\s+/)[0] === q.split(/\s+/)[0]); return f.length === 1 ? f[0] : null; })()
-    || (() => { const f = pool.filter((m) => m.name.toLowerCase().startsWith(q)); return f.length === 1 ? f[0] : null; })();
+const wordRe = (w) => new RegExp(`(^|[^a-z0-9])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z0-9])`, 'i');
+
+/**
+ * Who does an "Owner" cell name? Handles one or several people, in any wording:
+ * "Antony T J", "Enbarasan", "Mukul Chaudhary\nShwetank", "Enbarasan E Shwetank Adarsh Pandit".
+ * Returns members in the order they appear (first = primary owner) and any left-over text that matched nobody.
+ */
+export function resolveMembers(raw, members) {
+  const q = String(raw || '').trim();
+  if (!q) return { matched: [], leftover: '' };
+  const firstCount = {};
+  for (const m of members) { const f = m.name.toLowerCase().split(/\s+/)[0]; firstCount[f] = (firstCount[f] || 0) + 1; }
+  const hits = [];
+  let rest = q.toLowerCase();
+  for (const m of members) {
+    const full = m.name.toLowerCase(), first = full.split(/\s+/)[0];
+    const tries = [m.email.toLowerCase(), full, ...(firstCount[first] === 1 ? [first] : [])];
+    for (const t of tries) {
+      const mm = wordRe(t).exec(q.toLowerCase());
+      if (mm) { hits.push({ m, idx: mm.index + mm[1].length, t }); break; }
+    }
+  }
+  hits.sort((a, b) => a.idx - b.idx);
+  for (const h of hits) rest = rest.replace(h.t, ' ');
+  const leftover = rest.replace(/[\s,;&/+\n]+/g, ' ').replace(/\band\b/g, ' ').trim();
+  // unambiguous prefix typed by hand ("rohan k") when nothing else matched
+  if (!hits.length) {
+    const f = members.filter((m) => m.name.toLowerCase().startsWith(q.toLowerCase()));
+    if (f.length === 1) return { matched: [f[0]], leftover: '' };
+  }
+  return { matched: hits.map((h) => h.m), leftover };
 }
+export const resolveMember = (raw, members) => resolveMembers(raw, members).matched[0] || null;
+
+/** Flags about the Owner cell itself (people we don't know). */
+function ownerFlags(rec, members) {
+  if (!rec.assignee_raw) return [];
+  const { matched, leftover } = resolveMembers(rec.assignee_raw, members);
+  if (!matched.length) return [{ code: 'unknown_assignee', label: `Unknown teammate "${rec.assignee_raw.replace(/\s+/g, ' ')}" — auto-assigned instead` }];
+  if (leftover.length >= 3) return [{ code: 'unknown_coowner', label: `Unrecognised co-owner "${leftover}" (not on the team list)` }];
+  return [];
+}
+const OWNER_FLAG_CODES = ['unknown_assignee', 'unknown_coowner'];
 
 function diffRecord(prevSnap, rec, project, cfg) {
   const ws = cfg.ignore_whitespace;
@@ -56,7 +92,9 @@ function diffRecord(prevSnap, rec, project, cfg) {
     out.push({ field: f.key, label: f.label, old_value: f.key === 'status' ? (project.status || '') : f.key === 'assignee' ? (a || '') : show(a), new_value: show(b), raw: b, prevRaw: a, def: f });
   }
   const keys = new Set([...Object.keys(prevSnap.extra || {}), ...Object.keys(nowSnap.extra || {})]);
+  const dupLive = out.some((d) => d.field === 'deadline') && !rec.revisedDate;
   for (const k of keys) {
+    if (dupLive && k === rec.liveKey) continue; // the 'Delivery date' change above already says it
     const a = prevSnap.extra?.[k] || '', b = nowSnap.extra?.[k] || '';
     if (normVal(a, ws) !== normVal(b, ws)) out.push({ field: `extra:${k}`, label: k, old_value: a, new_value: b, raw: b, prevRaw: a, def: { key: 'extra', cfg: 'extra' } });
   }
@@ -75,16 +113,16 @@ async function doSync({ trigger = 'manual' } = {}) {
   const s = getSettings();
   const t0 = Date.now();
   const runId = insert('sync_runs', { trigger, status: 'running', started_at: nowIso() });
-  const stats = { rows_seen: 0, created: 0, updated: 0, unchanged: 0, flagged: 0, assigned: 0, emails: 0, changes: 0, removed: 0, duplicates: 0 };
+  const stats = { skipped: 0, rows_seen: 0, created: 0, updated: 0, unchanged: 0, flagged: 0, assigned: 0, emails: 0, changes: 0, removed: 0, duplicates: 0 };
   const detail = { created: [], updated: [], issues: [], removed: [], restored: [] };
   let status = 'success', error = null, snapshotHash = null;
   try {
     const snapshot = await fetchSnapshot();
-    snapshotHash = sha(JSON.stringify(snapshot.tabs));
+    snapshotHash = sha(JSON.stringify(snapshot.tabs) + JSON.stringify(s.assets));
     const lastHash = getKV('last_snapshot_hash');
     const skipParse = lastHash === snapshotHash && get('SELECT COUNT(*) n FROM projects').n > 0;
     if (skipParse) {
-      stats.rows_seen = snapshot.tabs.reduce((n, t) => n + t.rows.length, 0);
+      stats.rows_seen = getKV('last_records_count') ?? snapshot.tabs.reduce((n, t) => n + t.rows.length, 0);
       stats.unchanged = get('SELECT COUNT(*) n FROM projects WHERE removed_from_sheet=0').n;
       detail.note = 'Sheet unchanged since last sync';
     } else {
@@ -114,10 +152,12 @@ async function doSync({ trigger = 'manual' } = {}) {
 }
 
 async function reconcile(snapshot, s, runId, stats, detail) {
-  const { records, issues } = parseSnapshot(snapshot, { now: new Date() });
-  stats.rows_seen = records.length;
+  const { records, issues, skipped } = parseSnapshot(snapshot, { now: new Date(), assetCodes: s.assets?.import_codes });
+  stats.rows_seen = records.length; setKV('last_records_count', records.length);
+  stats.skipped = skipped.filtered + skipped.noAsset;
   detail.issues = issues;
-  const members = allMembers().filter((m) => !m.is_owner);
+  detail.skipped = { filtered: skipped.filtered, noAsset: skipped.noAsset, ignored: skipped.ignored, sample: skipped.rows.slice(0, 12), codes: s.assets?.import_codes };
+  const members = allMembers();
   const existing = all('SELECT * FROM projects').map(hydrate);
   const byKey = new Map(existing.map((p) => [p.external_key, p]));
   const byFp = new Map(); for (const p of existing) if (!byFp.has(p.fingerprint)) byFp.set(p.fingerprint, p);
@@ -188,13 +228,11 @@ async function reconcile(snapshot, s, runId, stats, detail) {
     created.push(p);
     stats.created++; detail.created.push(p.id);
     if (rec.assignee_raw) {
-      const m = resolveMember(rec.assignee_raw, members);
-      if (m && s.assign.respect_sheet_assignment) sheetAssign.push([p.id, m, rec]);
-      else if (!m) {
-        const flags = [...p.flags, { code: 'unknown_assignee', label: `Unknown teammate "${rec.assignee_raw}" — auto-assigned instead` }];
-        update('projects', p.id, { flags: JSON.stringify(flags) });
-        p.flags = flags;
-      }
+      const { matched } = resolveMembers(rec.assignee_raw, members);
+      const of = ownerFlags(rec, members);
+      if (matched.length) update('projects', p.id, { collaborators: JSON.stringify(matched.slice(1).map((x) => x.id)) });
+      if (of.length) { p.flags = [...p.flags, ...of]; update('projects', p.id, { flags: JSON.stringify(p.flags) }); }
+      if (matched.length && s.assign.respect_sheet_assignment) sheetAssign.push([p.id, matched[0], rec]);
     }
   }
   stats.flagged += created.filter((p) => p.flags.length).length;
@@ -224,6 +262,7 @@ function createProject(rec, s, runId) {
     completed_at: status === 'Completed' ? nowIso() : null,
     sheet_tab: rec.tab, sheet_row: rec.row, sheet_gid: rec.gid, links: JSON.stringify(rec.links), product_info: rec.product,
     extra: JSON.stringify(rec.extra), sheet_snapshot: JSON.stringify(snapOf(rec)), flags: JSON.stringify(rec.flags),
+    assets: rec.assets || null, deliverables: rec.deliverables ?? null,
   });
   run('UPDATE projects SET code=? WHERE id=?', `VP-${String(id).padStart(4, '0')}`, id);
   ensureMonth(rec.month, rec.tab);
@@ -270,10 +309,11 @@ async function applyUpdate(rec, p, s, runId, members) {
   }
   patch.extra = JSON.stringify(rec.extra);
   const oldCodes = new Set((p.flags || []).map((f) => f.code));
-  const keepFlags = (p.flags || []).filter((f) => f.code === 'unknown_assignee');
-  const flags = [...rec.flags, ...keepFlags];
+  const flags = [...rec.flags, ...ownerFlags(rec, members)];
+  patch.collaborators = JSON.stringify(resolveMembers(rec.assignee_raw, members).matched.slice(1).map((x) => x.id));
+  patch.deliverables = rec.deliverables ?? null;
   patch.flags = JSON.stringify(flags);
-  out.newFlags = flags.filter((f) => !oldCodes.has(f.code) && f.code !== 'unknown_assignee');
+  out.newFlags = flags.filter((f) => !oldCodes.has(f.code) && !OWNER_FLAG_CODES.includes(f.code));
   patch.sheet_snapshot = JSON.stringify(snapOf(rec));
   if (out.changes.length || diffs.length) patch.updated_at = nowIso();
   update('projects', p.id, patch);
